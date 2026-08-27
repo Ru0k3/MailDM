@@ -1,0 +1,28 @@
+{
+  "name": "maildm",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gmail-only Discord email summarizer MVP",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test",
+    "check": "tsc -p tsconfig.json",
+    "register:commands": "node src/discord/register-commands.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "googleapis": "^155.0.1",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.3.0",
+    "supertest": "^7.1.4",
+    "typescript": "^5.9.2"
+  }
+}
