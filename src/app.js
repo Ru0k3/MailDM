@@ -5,7 +5,7 @@ import { handleInteraction } from './discord/commands.js';
 
 const page = (title, body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title></head><body><main><h1>${title}</h1>${body}</main></body></html>`;
 
-export function createApp({ store, env = process.env, oauthClient = null, fetchImpl = fetch } = {}) {
+export function createApp({ store, env = process.env, oauthClient = null, fetchImpl = fetch, gmailAdapterFactory, summarizerFactory } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ verify: (req, _res, buffer) => { req.rawBody = buffer.toString('utf8'); } }));
@@ -35,7 +35,7 @@ export function createApp({ store, env = process.env, oauthClient = null, fetchI
       }
     }
     try {
-      const response = await handleInteraction(req.body, { store, env, fetchImpl });
+      const response = await handleInteraction(req.body, { store, env, fetchImpl, gmailAdapterFactory, summarizerFactory });
       return res.json(response);
     } catch (error) {
       console.error('Interaction failed', error);

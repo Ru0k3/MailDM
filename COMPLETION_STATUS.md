@@ -1,23 +1,17 @@
 # Completion status
 
-## Verified on 2026-08-28
+## Google OAuth status verified on 2026-08-28
 
-- Google Cloud project: `maildm-506818` (MailDM)
-- Authenticated account: `ramakrishnadulam10@gmail.com`
-- Google Auth Platform status: app is still in **Testing**.
-- Verification Center message: verification is not required while the app has Testing publishing status.
-- Audience page: publishing is blocked because the OAuth configuration is incomplete; Google directs the owner to Branding.
-- Branding page: app name is `MailDM`, user support email is `ramakrishnadulam10@gmail.com`, but application home page, privacy policy link, and terms of service link are blank. The logo is also not configured.
-- Test user currently listed: `ramakrishnadulam10@gmail.com`.
+The Google Cloud project is `maildm-506818` (MailDM), and the authenticated account is `ramakrishnadulam10@gmail.com`. Google Auth Platform reports that the app is still in **Testing**, so verification is not required while that publishing status remains. The Audience page cannot publish yet because Branding is incomplete: the application home page, privacy-policy URL, and terms-of-service URL are blank, and no logo is configured. The deployed URLs must be supplied before Google Branding and production publication can be completed.
 
-## Source-code status
+## Repository-backed MVP
 
-- GitHub repository `Ru0k3/MailDM` is private and contains only a one-line `README.md` on the `main` branch.
-- There is no summarizer implementation, test suite, or `GOOGLE_VERIFICATION.md` in the repository or workspace copy.
-- Guardrails cannot be implemented or adversarially tested until the actual application source is provided or pushed to the repository.
+The prior empty repository state was corrected in commit `5d8340067a2ef4a72a35bc3f2cfe244b97d8310d`. That commit contains the Express app, Discord signature verification and interactions endpoint, Google OAuth start/callback, Gmail read-only adapter, SQLite schema, all requested slash commands, provider adapters, prompt-injection guardrails, public readiness pages, and tests.
 
-## Remaining inputs needed
+## Scheduler completion pending commit
 
-1. The application source/repository containing the summarizer pipeline.
-2. The deployed application URL and privacy-policy URL; terms-of-service URL if used. These cannot be safely invented for Google OAuth configuration.
-3. A logo file if the app intends to use one in the consent screen.
+The working tree now contains the scheduler extension that is ready to be committed only after the final validation and push. It adds `summary_history`, the unique user/local-date scheduled claim, IANA timezone and DST-aware due detection, the shared `runSummaryForUser` pipeline, encrypted-token refresh failure handling, AI failure notices, Discord DM failure propagation, and an in-process two-minute interval started by `src/server.js`. Tests currently pass 15/15 and `npm run check` exits successfully. The exact scheduler commit must be recorded here only after it is pushed to GitHub.
+
+## Deployment constraint
+
+Because the scheduler is an in-process interval rather than a public callback endpoint, the Express service must run on an always-on Manus host. `SCHEDULER_ENABLED=false` disables it. No public scheduler endpoint is exposed.

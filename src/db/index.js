@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS gmail_accounts (
   refresh_token TEXT,
   expiry_date INTEGER,
   scopes TEXT NOT NULL,
+  reauth_required INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id, email)
 );
@@ -36,6 +37,18 @@ CREATE TABLE IF NOT EXISTS feedback (
   rating TEXT NOT NULL CHECK (rating IN ('helpful','not_helpful')),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS summary_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  local_date TEXT NOT NULL,
+  delivery_kind TEXT NOT NULL CHECK (delivery_kind IN ('scheduled', 'manual')),
+  status TEXT NOT NULL CHECK (status IN ('processing', 'complete', 'failed')),
+  summary_text TEXT,
+  error_code TEXT,
+  claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TEXT,
+  UNIQUE(user_id, local_date, delivery_kind)
+);
 `;
 
 export function openDatabase(filename = process.env.DATABASE_PATH ?? ':memory:') {
@@ -43,6 +56,7 @@ export function openDatabase(filename = process.env.DATABASE_PATH ?? ':memory:')
   const db = new Database(filename);
   db.pragma('foreign_keys = ON');
   db.exec(schema);
+  try { db.exec('ALTER TABLE gmail_accounts ADD COLUMN reauth_required INTEGER NOT NULL DEFAULT 0'); } catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; }
   return db;
 }
 
@@ -50,6 +64,7 @@ export function makeStore(db) {
   const ensureUser = db.prepare('INSERT INTO users (discord_user_id) VALUES (?) ON CONFLICT(discord_user_id) DO NOTHING');
   const userId = db.prepare('SELECT id FROM users WHERE discord_user_id = ?');
   const ensureSettings = db.prepare('INSERT INTO settings (user_id) VALUES (?) ON CONFLICT(user_id) DO NOTHING');
+  const claim = db.prepare(`INSERT INTO summary_history (user_id, local_date, delivery_kind, status) VALUES (?, ?, 'scheduled', 'processing') ON CONFLICT(user_id, local_date, delivery_kind) DO NOTHING`);
 
   return {
     getOrCreateUser(discordUserId) {
@@ -58,21 +73,20 @@ export function makeStore(db) {
       ensureSettings.run(row.id);
       return row.id;
     },
-    getUser(discordUserId) {
-      return userId.get(discordUserId);
-    },
+    getUser(discordUserId) { return userId.get(discordUserId); },
     saveGmailAccount(discordUserId, account) {
       const id = this.getOrCreateUser(discordUserId);
-      db.prepare(`INSERT INTO gmail_accounts (user_id, google_sub, email, access_token, refresh_token, expiry_date, scopes)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+      db.prepare(`INSERT INTO gmail_accounts (user_id, google_sub, email, access_token, refresh_token, expiry_date, scopes, reauth_required)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
         ON CONFLICT(user_id, email) DO UPDATE SET google_sub=excluded.google_sub, access_token=excluded.access_token,
-        refresh_token=COALESCE(excluded.refresh_token, gmail_accounts.refresh_token), expiry_date=excluded.expiry_date, scopes=excluded.scopes`)
+        refresh_token=COALESCE(excluded.refresh_token, gmail_accounts.refresh_token), expiry_date=excluded.expiry_date,
+        scopes=excluded.scopes, reauth_required=0`)
         .run(id, account.googleSub, account.email, account.accessToken, account.refreshToken ?? null, account.expiryDate ?? null, JSON.stringify(account.scopes ?? []));
     },
     listGmailAccounts(discordUserId) {
       const user = this.getUser(discordUserId);
       if (!user) return [];
-      return db.prepare('SELECT id, email, google_sub AS googleSub, access_token AS accessToken, refresh_token AS refreshToken, expiry_date AS expiryDate, scopes FROM gmail_accounts WHERE user_id = ? ORDER BY email').all(user.id);
+      return db.prepare('SELECT id, email, google_sub AS googleSub, access_token AS accessToken, refresh_token AS refreshToken, expiry_date AS expiryDate, scopes, reauth_required AS reauthRequired FROM gmail_accounts WHERE user_id = ? ORDER BY email').all(user.id);
     },
     getSettings(discordUserId) {
       const id = this.getOrCreateUser(discordUserId);
@@ -82,13 +96,36 @@ export function makeStore(db) {
       const id = this.getOrCreateUser(discordUserId);
       const current = this.getSettings(discordUserId);
       const next = { ...current, ...patch };
-      db.prepare(`UPDATE settings SET summary_time=?, timezone=?, ai_provider=?, ai_model=?, ai_api_key=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?`)
-        .run(next.summaryTime, next.timezone, next.aiProvider, next.aiModel, next.aiApiKey ?? null, id);
+      db.prepare('UPDATE settings SET summary_time=?, timezone=?, ai_provider=?, ai_model=?, ai_api_key=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(next.summaryTime, next.timezone, next.aiProvider, next.aiModel, next.aiApiKey ?? null, id);
       return this.getSettings(discordUserId);
     },
     recordFeedback(discordUserId, messageId, rating) {
       const id = this.getOrCreateUser(discordUserId);
       db.prepare('INSERT INTO feedback (user_id, message_id, rating) VALUES (?, ?, ?)').run(id, messageId ?? null, rating);
+    },
+    listScheduledRecipients() {
+      return db.prepare(`SELECT u.discord_user_id AS discordUserId, s.summary_time AS summaryTime, s.timezone
+        FROM users u JOIN settings s ON s.user_id=u.id
+        WHERE EXISTS (SELECT 1 FROM gmail_accounts a WHERE a.user_id=u.id)`).all();
+    },
+    claimScheduledSummary(discordUserId, localDate) {
+      const id = this.getOrCreateUser(discordUserId);
+      return claim.run(id, localDate).changes === 1;
+    },
+    completeScheduledSummary(discordUserId, localDate, summaryText) {
+      const user = this.getUser(discordUserId);
+      if (!user) return;
+      db.prepare(`UPDATE summary_history SET status='complete', summary_text=?, completed_at=CURRENT_TIMESTAMP WHERE user_id=? AND local_date=? AND delivery_kind='scheduled' AND status='processing'`).run(summaryText, user.id, localDate);
+    },
+    failScheduledSummary(discordUserId, localDate, errorCode) {
+      const user = this.getUser(discordUserId);
+      if (!user) return;
+      db.prepare(`UPDATE summary_history SET status='failed', error_code=?, completed_at=CURRENT_TIMESTAMP WHERE user_id=? AND local_date=? AND delivery_kind='scheduled' AND status='processing'`).run(errorCode, user.id, localDate);
+    },
+    markAccountReauthRequired(discordUserId, email) {
+      const user = this.getUser(discordUserId);
+      if (!user) return;
+      db.prepare('UPDATE gmail_accounts SET reauth_required=1 WHERE user_id=? AND email=?').run(user.id, email);
     },
     disconnectAndPurge(discordUserId, email) {
       const user = this.getUser(discordUserId);

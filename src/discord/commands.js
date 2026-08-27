@@ -1,6 +1,5 @@
 import { encryptSecret, decryptSecret } from '../security/index.js';
-import { makeGmailAdapter } from '../gmail/service.js';
-import { makeSummarizer } from '../summarizer/index.js';
+import { runSummaryForUser, PipelineError } from '../summarizer/pipeline.js';
 
 export const COMMANDS = [
   { name: 'sample', description: 'See a sample email summary' },
@@ -8,7 +7,7 @@ export const COMMANDS = [
   { name: 'accounts', description: 'List connected Gmail accounts' },
   { name: 'disconnect', description: 'Disconnect and purge a Gmail account', options: [{ name: 'email', type: 3, required: false }] },
   { name: 'settings', description: 'Show your MailDM settings' },
-  { name: 'set-time', description: 'Set daily summary time', options: [{ name: 'time', type: 3, required: true }] },
+  { name: 'set-time', description: 'Set daily summary time', options: [{ name: 'time', type: 3, required: true }, { name: 'timezone', type: 3, required: false }] },
   { name: 'set-ai-provider', description: 'Set the AI provider', options: [{ name: 'provider', type: 3, required: true, choices: [{ name: 'OpenAI', value: 'openai' }, { name: 'Anthropic', value: 'anthropic' }] }] },
   { name: 'set-model', description: 'Set the AI model', options: [{ name: 'model', type: 3, required: true }] },
   { name: 'set-ai-key', description: 'Set your personal AI API key', options: [{ name: 'key', type: 3, required: true }] },
@@ -19,7 +18,7 @@ export const COMMANDS = [
 
 function option(interaction, name) { return interaction.data?.options?.find((item) => item.name === name)?.value; }
 function reply(content, extra = {}) { return { type: 4, data: { content, flags: 64, ...extra } }; }
-const feedbackComponents = [{ type: 1, components: [{ type: 2, style: 2, label: 'Helpful', custom_id: 'feedback:helpful' }, { type: 2, style: 2, label: 'Not helpful', custom_id: 'feedback:not_helpful' }] }];
+export const feedbackComponents = [{ type: 1, components: [{ type: 2, style: 2, label: 'Helpful', custom_id: 'feedback:helpful' }, { type: 2, style: 2, label: 'Not helpful', custom_id: 'feedback:not_helpful' }] }];
 
 export async function handleInteraction(interaction, deps) {
   const discordUserId = interaction.member?.user?.id ?? interaction.user?.id;
@@ -47,9 +46,11 @@ export async function handleInteraction(interaction, deps) {
   }
   if (name === 'set-time') {
     const time = option(interaction, 'time');
+    const timezone = option(interaction, 'timezone') ?? deps.store.getSettings(discordUserId).timezone;
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return reply('Use 24-hour HH:MM format, for example `09:00`.');
-    deps.store.updateSettings(discordUserId, { summaryTime: time });
-    return reply(`Daily summary time set to ${time} UTC.`);
+    try { Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(); } catch { return reply('Use a valid IANA timezone, for example `America/New_York`.'); }
+    deps.store.updateSettings(discordUserId, { summaryTime: time, timezone });
+    return reply(`Daily summary time set to ${time} (${timezone}).`);
   }
   if (name === 'set-ai-provider') {
     const provider = option(interaction, 'provider');
@@ -72,12 +73,13 @@ export async function handleInteraction(interaction, deps) {
   if (name === 'summary-now') {
     const accounts = deps.store.listGmailAccounts(discordUserId);
     if (!accounts.length) return reply('No Gmail account connected. Use `/connect` first.');
-    const settings = deps.store.getSettings(discordUserId);
-    const emails = [];
-    for (const account of accounts) emails.push(...await makeGmailAdapter({ account, env: deps.env }).listRecentMessages({ maxResults: 10 }));
-    const effectiveSettings = { ...settings, aiApiKey: decryptSecret(settings.aiApiKey, deps.env.SESSION_SECRET) };
-    const summary = await makeSummarizer(effectiveSettings, deps.env, deps.fetchImpl).summarize(emails);
-    return reply(summary || 'No summary was returned.', { components: feedbackComponents });
+    try {
+      const result = await runSummaryForUser({ discordUserId, store: deps.store, env: deps.env, fetchImpl: deps.fetchImpl, gmailAdapterFactory: deps.gmailAdapterFactory, summarizerFactory: deps.summarizerFactory });
+      return reply(result.summary, { components: feedbackComponents });
+    } catch (error) {
+      if (error instanceof PipelineError) return reply(error.code === 'REAUTH_REQUIRED' ? 'Gmail authorization needs attention. Use `/reauthorize`.' : error.code === 'AI_FAILURE' ? 'Your AI key or provider needs attention. Check `/settings` and try again.' : error.message);
+      throw error;
+    }
   }
   return reply('Unknown command.');
 }
