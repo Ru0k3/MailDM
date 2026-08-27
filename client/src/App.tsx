@@ -5,12 +5,17 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
+import OAuthResult from "./pages/OAuthResult";
+import Status from "./pages/Status";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
       <Route path={"/"} component={Home} />
+      <Route path={"/oauth/success"} component={() => <OAuthResult outcome="success" />} />
+      <Route path={"/oauth/error"} component={() => <OAuthResult outcome="error" />} />
+      <Route path={"/status"} component={Status} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

@@ -7,6 +7,11 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import { registerDiscordInteractionRoutes } from "../discordRoutes";
+import { registerGmailOAuthRoutes } from "../gmailOAuth";
+import { registerScheduledRoutes } from "../scheduledRoutes";
+import { registerDiscordCommands } from "../discordCommandRegistration";
+import { registerMaildmStatusRoutes } from "../statusRoutes";
 import { serveStatic, setupVite } from "./vite";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -31,7 +36,11 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
-  // Configure body parser with larger size limit for file uploads
+  registerDiscordInteractionRoutes(app);
+  registerGmailOAuthRoutes(app);
+  registerScheduledRoutes(app);
+  registerMaildmStatusRoutes(app);
+  void registerDiscordCommands();
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
