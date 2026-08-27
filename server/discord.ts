@@ -10,9 +10,10 @@ export type DiscordInteraction = {
   type: number;
   token: string;
   guild_id?: string;
+  message?: { id?: string };
   member?: { user?: { id: string; username?: string; global_name?: string } };
   user?: { id: string; username?: string; global_name?: string };
-  data?: { name?: string; options?: Array<{ name: string; value?: string | number | boolean }> };
+  data?: { name?: string; custom_id?: string; options?: Array<{ name: string; value?: string | number | boolean }> };
 };
 
 function discordPublicKey(publicKeyHex: string) {
@@ -66,7 +67,25 @@ export function interactionResponse(res: Response, content: string, options: { e
   });
 }
 
-export async function sendDiscordDirectMessage(discordUserId: string, content: string): Promise<{ deliveryId: string }> {
+export function deferredInteractionResponse(res: Response) {
+  return res.status(200).json({ type: 5 });
+}
+
+export function componentAcknowledgement(res: Response) {
+  return res.status(200).json({ type: 6 });
+}
+
+export async function sendDiscordInteractionFollowup(interactionToken: string, content: string) {
+  if (!ENV.discordApplicationId) throw new Error("Discord application ID is not configured");
+  const response = await fetch(`${DISCORD_API}/webhooks/${ENV.discordApplicationId}/${interactionToken}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) throw new Error(`Discord interaction follow-up failed with ${response.status}`);
+}
+
+export async function sendDiscordDirectMessage(discordUserId: string, content: string, options: { components?: unknown[] } = {}): Promise<{ deliveryId: string }> {
   if (!ENV.discordBotToken) throw new Error("Discord bot token is not configured");
   const headers = { Authorization: `Bot ${ENV.discordBotToken}`, "Content-Type": "application/json" };
   const channelResponse = await fetch(`${DISCORD_API}/users/@me/channels`, {
@@ -81,7 +100,7 @@ export async function sendDiscordDirectMessage(discordUserId: string, content: s
   const messageResponse = await fetch(`${DISCORD_API}/channels/${channel.id}/messages`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, components: options.components }),
   });
   if (!messageResponse.ok) throw new Error(`Discord message delivery failed with ${messageResponse.status}`);
   const message = (await messageResponse.json()) as { id?: string };

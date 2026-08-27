@@ -1,6 +1,6 @@
 # MailDM
 
-MailDM delivers private, AI-generated daily Gmail briefs through Discord direct messages. The initial release supports multiple users and multiple read-only Gmail accounts per user, bounded in-memory message processing, user-owned AI provider keys, provider-specific recommended models, and timezone-aware daily delivery.
+MailDM delivers private, AI-generated daily Gmail briefs through Discord direct messages. The initial release supports multiple users and multiple read-only Gmail accounts per user, bounded in-memory message processing, user-owned AI provider keys, provider-specific recommended models, feedback capture, and timezone-aware daily delivery. Outlook, Slack, and GitHub source integrations are deliberately deferred.
 
 ## What MailDM does
 
@@ -43,12 +43,16 @@ Create a Google Cloud project, enable Gmail API, configure an External OAuth con
 | `/start` | Explains onboarding. |
 | `/connect gmail [label]` | Creates a 15-minute Google authorization link for one Gmail account. |
 | `/accounts` | Lists connected Gmail accounts and account IDs. |
-| `/disconnect <account_id>` | Revokes local access and attempts Google token revocation. |
+| `/sample` | Shows an illustrative brief before you connect Gmail or configure an AI key. |
+| `/disconnect <account_id>` | Revokes the Google refresh token where possible, then permanently deletes the local encrypted token and account data. |
 | `/reauthorize <account_id>` | Creates a new Google link if MailDM marks an account as requiring reauthorization. |
 | `/set-ai-provider` | Selects OpenAI, Anthropic, or NVIDIA. |
 | `/set-model` | Selects a fixed recommended model for the active provider. |
 | `/set-ai-key` | Opens a Discord DM-only modal, validates and encrypts the user’s key. |
 | `/set-time` | Creates or updates a managed daily scheduled callback in the user’s IANA timezone. |
+| `/settings` | Shows your Gmail-account count, active AI provider/model, and delivery schedule. |
+| `/summary-now` | Runs the same real Gmail digest pipeline used for a scheduled delivery. |
+| `/delete-my-data` | Permanently deletes Gmail links, encrypted AI credentials, schedules, summary history, and preferences after explicit confirmation. |
 
 ## Development checks
 
@@ -58,3 +62,5 @@ pnpm test
 ```
 
 Read [ARCHITECTURE.md](./ARCHITECTURE.md) for security and data-retention details, and [SOURCES.md](./SOURCES.md) for provider references.
+
+Read [GOOGLE_VERIFICATION.md](./GOOGLE_VERIFICATION.md) before changing Google OAuth from named-user testing mode to public production access.

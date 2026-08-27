@@ -14,4 +14,13 @@
 - [x] Define extensible source and delivery interfaces for later Outlook, Slack, and read-only GitHub notification integrations.
 - [x] Add unit tests, integration-focused tests, project documentation, and secure deployment configuration guidance.
 - [x] Perform type checks, run tests, and verify the rendered experience at desktop and mobile sizes.
-- [ ] Save a Manus checkpoint and provide secure end-to-end setup and test instructions.
+- [x] Save the initial Manus implementation checkpoint.
+- [x] Deliver the secure end-to-end setup and test instructions.
+- [x] Restrict the user-facing MVP scope and documentation to Gmail-only, with Outlook, Slack, and GitHub deferred.
+- [x] Add a `/sample` command that delivers a clear illustrative brief before OAuth or AI-key setup.
+- [x] Add first-class `/settings` and `/summary-now` commands using real configuration and data.
+- [x] Add feedback storage and verified thumbs-up/down interactions for delivered briefs.
+- [x] Replace soft account disconnection with disconnect-and-purge deletion of Gmail tokens and associated account data.
+- [x] Add user data-deletion handling and public privacy/Google OAuth verification preparation pages.
+- [x] Add adversarial prompt-injection, Gmail normalization, and AI-key validation success/failure tests.
+- [x] Re-run verification, save the Gmail-only MVP checkpoint, and deliver the updated setup/test guide.

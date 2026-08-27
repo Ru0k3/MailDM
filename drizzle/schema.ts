@@ -204,6 +204,7 @@ export const summaryHistory = mysqlTable(
     overview: text("overview").notNull(),
     itemCount: int("item_count").notNull(),
     noImportantMail: boolean("no_important_mail").notNull().default(false),
+    feedback: varchar("feedback", { length: 8 }),
     discordMessageId: varchar("discord_message_id", { length: 32 }),
     deliveredAt: timestamp("delivered_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),

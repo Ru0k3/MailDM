@@ -6,7 +6,10 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import OAuthResult from "./pages/OAuthResult";
+import GmailReadiness from "./pages/GmailReadiness";
+import Privacy from "./pages/Privacy";
 import Status from "./pages/Status";
+import Terms from "./pages/Terms";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -16,6 +19,9 @@ function Router() {
       <Route path={"/oauth/success"} component={() => <OAuthResult outcome="success" />} />
       <Route path={"/oauth/error"} component={() => <OAuthResult outcome="error" />} />
       <Route path={"/status"} component={Status} />
+      <Route path={"/gmail-readiness"} component={GmailReadiness} />
+      <Route path={"/privacy"} component={Privacy} />
+      <Route path={"/terms"} component={Terms} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

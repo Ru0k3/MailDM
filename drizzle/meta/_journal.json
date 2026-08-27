@@ -15,6 +15,13 @@
       "when": 1787858011551,
       "tag": "0001_supreme_dagger",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1787859353538,
+      "tag": "0002_bumpy_goliath",
+      "breakpoints": true
     }
   ]
 }

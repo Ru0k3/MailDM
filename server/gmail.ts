@@ -11,7 +11,7 @@ function decodeBase64Url(value: string) {
   return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 }
 
-function compactText(value: string) {
+export function sanitizeGmailText(value: string) {
   return value
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -23,7 +23,7 @@ function compactText(value: string) {
 
 function partText(part: GmailPart | undefined): string {
   if (!part) return "";
-  const own = part.body?.data && (part.mimeType === "text/plain" || part.mimeType === "text/html") ? compactText(decodeBase64Url(part.body.data)) : "";
+  const own = part.body?.data && (part.mimeType === "text/plain" || part.mimeType === "text/html") ? sanitizeGmailText(decodeBase64Url(part.body.data)) : "";
   const children = (part.parts ?? []).map(partText).filter(Boolean);
   return [own, ...children].join(" ").trim();
 }
@@ -49,8 +49,8 @@ export const gmailSourceAdapter: SourceProviderAdapter = {
       const message = await gmailFetch(`${GMAIL_API}/messages/${encodeURIComponent(listingItem.id)}?format=full`, accessToken);
       if (!message.id || !message.labelIds?.includes("UNREAD")) continue;
       const body = partText(message.payload).slice(0, limits.maxBodyCharacters);
-      const subject = compactText(header(message.payload, "Subject")) || "(no subject)";
-      const sender = compactText(header(message.payload, "From")) || "Unknown sender";
+      const subject = sanitizeGmailText(header(message.payload, "Subject")) || "(no subject)";
+      const sender = sanitizeGmailText(header(message.payload, "From")) || "Unknown sender";
       items.push({
         sourceProvider: "gmail",
         sourceAccountId: accountId,

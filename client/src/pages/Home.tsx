@@ -43,7 +43,7 @@ export default function Home() {
         </section>
 
         <section className="mt-5 grid gap-5 rounded-[1.5rem] bg-[#dce6d7] px-7 py-8 sm:px-10 lg:grid-cols-[1fr_auto] lg:items-center" id="start"><div><p className="font-['DM_Mono'] text-[10px] uppercase tracking-[0.16em] text-[#638372]">Ready when you are</p><h2 className="mt-3 font-['Playfair_Display'] text-3xl tracking-[-0.045em] text-[#273a33] sm:text-4xl">Open Discord. Type <span className="rounded-lg bg-[#f5f1e9] px-2 py-1 font-['DM_Mono'] text-lg">/start</span>.</h2></div><p className="max-w-sm text-sm leading-6 text-[#52645c]">MailDM will guide account linking, AI setup, and your daily delivery time privately.</p></section>
-        <footer className="flex flex-col gap-3 px-1 py-8 font-['DM_Mono'] text-[10px] uppercase tracking-[0.12em] text-[#78867e] sm:flex-row sm:items-center sm:justify-between"><span>MailDM · Gmail first</span><span>Private by design · Read only</span></footer>
+        <footer className="flex flex-col gap-3 px-1 py-8 font-['DM_Mono'] text-[10px] uppercase tracking-[0.12em] text-[#78867e] sm:flex-row sm:items-center sm:justify-between"><span>MailDM · Gmail first</span><span className="flex gap-4"><a className="hover:text-[#1e2926]" href="/privacy">Privacy</a><a className="hover:text-[#1e2926]" href="/terms">Terms</a><a className="hover:text-[#1e2926]" href="/gmail-readiness">Gmail readiness</a><a className="hover:text-[#1e2926]" href="/status">Status</a></span></footer>
       </main>
     </div>
   );

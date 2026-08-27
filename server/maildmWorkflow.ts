@@ -33,6 +33,16 @@ function formatBrief(brief: StructuredBrief) {
   return truncateForDiscord(lines.join("\n"));
 }
 
+function feedbackComponents(jobId: number) {
+  return [{
+    type: 1,
+    components: [
+      { type: 2, style: 2, label: "Helpful", emoji: { name: "👍" }, custom_id: `maildm:feedback:up:${jobId}` },
+      { type: 2, style: 2, label: "Not helpful", emoji: { name: "👎" }, custom_id: `maildm:feedback:down:${jobId}` },
+    ],
+  }];
+}
+
 export function deliveryDateInTimezone(date: Date, timezone: string) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" })
     .formatToParts(date)
@@ -75,7 +85,7 @@ export async function runDigestForSchedule(input: { scheduleId: number; discordU
 
     if (unreadItems.length === 0 && reauthorizationNeeded.length > 0) {
       const followUp = reauthorizationNeeded.map(account => `#${account.id} ${account.label}`).join(", ");
-      const delivery = await sendDiscordDirectMessage(user.discordUserId, `MailDM needs you to reauthorize: ${followUp}. Open a private DM with MailDM and use /reauthorize <account_id>.`);
+      const delivery = await sendDiscordDirectMessage(user.discordUserId, `MailDM needs you to reauthorize: ${followUp}. Open a private DM with MailDM and use /reauthorize <account_id>.`, { components: feedbackComponents(job.id) });
       await saveSummaryHistory({ jobId: job.id, discordUserId: user.id, headline: "Gmail reauthorization required", overview: "One or more Gmail accounts could not be refreshed.", itemCount: 0, noImportantMail: false, discordMessageId: delivery.deliveryId });
       return { status: "reauthorization_required" as const, itemCount: 0 };
     }
@@ -87,7 +97,7 @@ export async function runDigestForSchedule(input: { scheduleId: number; discordU
       : await getAiAdapter(credential!.provider).createBrief({ apiKey: decryptCredential(credential!.encryptedApiKey), model: credential!.model, items: unreadItems });
 
     const warning = reauthorizationNeeded.length > 0 ? `\n\nAction required: reauthorize ${reauthorizationNeeded.map(account => `#${account.id} ${account.label}`).join(", ")} with /reauthorize <account_id>.` : "";
-    const delivery = await sendDiscordDirectMessage(user.discordUserId, truncateForDiscord(`${formatBrief(brief)}${warning}`));
+    const delivery = await sendDiscordDirectMessage(user.discordUserId, truncateForDiscord(`${formatBrief(brief)}${warning}`), { components: feedbackComponents(job.id) });
     for (const account of accounts) {
       await recordProcessedItems(account.id, unreadItems.filter(item => item.sourceAccountId === account.id).map(item => item.externalId), job.id);
     }

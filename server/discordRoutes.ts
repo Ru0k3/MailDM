@@ -1,25 +1,28 @@
 import type { Express, Request, Response } from "express";
 import express from "express";
-import { createHeartbeatJob, updateHeartbeatJob } from "./_core/heartbeat";
+import { createHeartbeatJob, deleteHeartbeatJob, updateHeartbeatJob } from "./_core/heartbeat";
 import { getAiAdapter, providerChoices } from "./aiProviders";
-import { commandOption, interactionResponse, interactionUser, isDirectMessageInteraction, type DiscordInteraction, verifyDiscordRequest } from "./discord";
+import { commandOption, componentAcknowledgement, deferredInteractionResponse, interactionResponse, interactionUser, isDirectMessageInteraction, sendDiscordInteractionFollowup, type DiscordInteraction, verifyDiscordRequest } from "./discord";
 import { createGmailAuthorizationUrl, revokeGoogleRefreshToken } from "./gmailOAuth";
 import { credentialFingerprint, encryptCredential } from "./maildmCrypto";
 import { getRecommendedModels, isRecommendedModel } from "./maildmConfig";
 import {
   attachScheduleTask,
   createOAuthState,
+  deleteDiscordUserData,
   disconnectAccount,
   getGmailAccount,
   getScheduleByDiscordUserId,
   listConnectedAccounts,
   recordAuditEvent,
+  recordSummaryFeedback,
   setAiSelection,
   upsertAiCredential,
   upsertDiscordUser,
   upsertSchedulePreference,
 } from "./maildmDb";
 import { nextLocalOccurrence, oneTimeUtcCron } from "./scheduledRoutes";
+import { deliveryDateString, runDigestForSchedule } from "./maildmWorkflow";
 
 type ConfigurableProvider = "openai" | "anthropic" | "nvidia";
 
@@ -58,6 +61,31 @@ function scheduleInput(time: string | undefined, timezone: string | undefined) {
   return { time, timezone };
 }
 
+const sampleBrief = [
+  "**Your sample MailDM brief**",
+  "This illustrative example is available before MailDM connects to Gmail. It does not use your data.",
+  "",
+  "**1. [Work] Project decision requested**",
+  "A teammate is waiting for your approval before the next milestone. _Needs a reply today._",
+  "",
+  "**2. [Personal] Upcoming appointment**",
+  "A reminder includes a date and preparation details. _Worth adding to your calendar._",
+].join("\n");
+
+async function configureDailySchedule(discordUserId: number, time: string, timezone: string) {
+  const prior = await getScheduleByDiscordUserId(discordUserId);
+  const schedule = await upsertSchedulePreference(discordUserId, time, timezone);
+  if (!schedule) throw new Error("schedule_creation_failed");
+  const next = nextLocalOccurrence(timezone, time);
+  const schedulePatch = { cron: oneTimeUtcCron(next), path: "/api/scheduled/digest", description: `MailDM daily digest for schedule ${schedule.id}` };
+  if (prior?.scheduleCronTaskUid) await updateHeartbeatJob(prior.scheduleCronTaskUid, schedulePatch, "");
+  else {
+    const job = await createHeartbeatJob({ name: `maildm-digest-${discordUserId}`, ...schedulePatch }, "");
+    await attachScheduleTask(schedule.id, job.taskUid);
+  }
+  return schedule;
+}
+
 export function registerDiscordInteractionRoutes(app: Express) {
   app.post("/api/discord/interactions", express.raw({ type: "application/json", limit: "1mb" }), async (req: Request, res: Response) => {
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
@@ -88,12 +116,18 @@ export function registerDiscordInteractionRoutes(app: Express) {
         return interactionResponse(res, `Your ${provider} key was validated and encrypted. It will not be shown again.`);
       }
 
+      if (interaction.type === 3) {
+        const match = /^maildm:feedback:(up|down):\d+$/.exec(interaction.data?.custom_id ?? "");
+        if (match && interaction.message?.id) await recordSummaryFeedback(user.id, interaction.message.id, match[1] as "up" | "down");
+        return componentAcknowledgement(res);
+      }
+
       if (interaction.type !== 2 || !interaction.data?.name) return res.status(400).json({ error: "unsupported interaction" });
       const command = interaction.data.name.toLowerCase();
-      if (command === "start" || command === "help") {
-        return interactionResponse(res, "Welcome to MailDM. In this private DM: 1) use /connect gmail, 2) choose /set-ai-provider and /set-model, 3) use /set-ai-key, and 4) set /set-time. MailDM only reads Gmail messages that are unread and never changes your inbox.");
-      }
+      if (command === "start" || command === "help") return interactionResponse(res, "Welcome to MailDM. Try /sample first. Then, in this private DM: 1) use /connect gmail, 2) choose /set-ai-provider and /set-model, 3) use /set-ai-key, and 4) set /set-time. MailDM only reads Gmail messages that are unread and never changes your inbox.");
       if (!isDirectMessageInteraction(interaction)) return dmOnly(res);
+
+      if (command === "sample") return interactionResponse(res, sampleBrief);
 
       if (command === "connect") {
         const provider = commandOption(interaction, "provider") ?? "gmail";
@@ -152,17 +186,62 @@ export function registerDiscordInteractionRoutes(app: Express) {
 
       if (command === "set-time") {
         const { time, timezone } = scheduleInput(commandOption(interaction, "time"), commandOption(interaction, "timezone"));
-        const prior = await getScheduleByDiscordUserId(discordUser.id);
-        const schedule = await upsertSchedulePreference(discordUser.id, time, timezone);
-        if (!schedule) throw new Error("schedule_creation_failed");
-        const next = nextLocalOccurrence(timezone, time);
-        const schedulePatch = { cron: oneTimeUtcCron(next), path: "/api/scheduled/digest", description: `MailDM daily digest for schedule ${schedule.id}` };
-        if (prior?.scheduleCronTaskUid) await updateHeartbeatJob(prior.scheduleCronTaskUid, schedulePatch, "");
-        else {
-          const job = await createHeartbeatJob({ name: `maildm-digest-${discordUser.id}`, ...schedulePatch }, "");
-          await attachScheduleTask(schedule.id, job.taskUid);
-        }
+        await configureDailySchedule(discordUser.id, time, timezone);
         return interactionResponse(res, `Daily delivery is set for ${time} ${timezone}. MailDM will send “No important unread mail today” when no unread messages qualify.`);
+      }
+
+      if (command === "settings") {
+        const providerInput = commandOption(interaction, "provider");
+        const modelInput = commandOption(interaction, "model");
+        const timeInput = commandOption(interaction, "time");
+        const timezoneInput = commandOption(interaction, "timezone");
+        const updates: string[] = [];
+        const selectedProvider = providerInput ?? discordUser.activeAiProvider;
+
+        if (providerInput) {
+          if (!isConfigurableProvider(providerInput)) return interactionResponse(res, "Choose a supported provider: openai, anthropic, or nvidia.", { ephemeral: true });
+          const nextModel = modelInput ?? getRecommendedModels(providerInput)[0];
+          if (!isRecommendedModel(providerInput, nextModel)) return interactionResponse(res, `That is not a recommended ${providerInput} model.`, { ephemeral: true });
+          await setAiSelection(discordUser.id, providerInput, nextModel);
+          updates.push(`AI: ${providerInput} · ${nextModel}`);
+        } else if (modelInput) {
+          if (!selectedProvider || !isConfigurableProvider(selectedProvider) || !isRecommendedModel(selectedProvider, modelInput)) return interactionResponse(res, "Choose a matching provider and recommended model, or set the provider first.", { ephemeral: true });
+          await setAiSelection(discordUser.id, selectedProvider, modelInput);
+          updates.push(`AI model: ${modelInput}`);
+        }
+
+        if (timeInput || timezoneInput) {
+          if (!timeInput || !timezoneInput) return interactionResponse(res, "To update delivery, provide both time and timezone in the same /settings command.", { ephemeral: true });
+          const { time, timezone } = scheduleInput(timeInput, timezoneInput);
+          await configureDailySchedule(discordUser.id, time, timezone);
+          updates.push(`Daily delivery: ${time} · ${timezone}`);
+        }
+
+        if (updates.length > 0) return interactionResponse(res, `**MailDM settings updated**\n${updates.join("\n")}\n\nIf you changed provider or model, run /set-ai-key to validate a key for that provider.`);
+        const schedule = await getScheduleByDiscordUserId(discordUser.id);
+        const accounts = await listConnectedAccounts(discordUser.id);
+        const ai = discordUser.activeAiProvider && discordUser.activeModel ? `${discordUser.activeAiProvider} · ${discordUser.activeModel}` : "Not configured";
+        const delivery = schedule ? `${schedule.localTime} · ${schedule.timezone}` : "Not configured";
+        return interactionResponse(res, `**Your MailDM settings**\nGmail accounts: ${accounts.length} connected\nAI: ${ai}\nDaily delivery: ${delivery}\n\nUpdate with /set-ai-provider, /set-model, /set-ai-key, or /set-time. Use /accounts to manage Gmail links.`);
+      }
+
+      if (command === "summary-now") {
+        const schedule = await getScheduleByDiscordUserId(discordUser.id);
+        if (!schedule) return interactionResponse(res, "Set your delivery time first with /set-time. This creates the secure daily schedule MailDM also uses for an on-demand brief.", { ephemeral: true });
+        deferredInteractionResponse(res);
+        void runDigestForSchedule({ scheduleId: schedule.id, discordUserId: discordUser.id, localDate: deliveryDateString(new Date(), schedule.timezone) })
+          .then(result => sendDiscordInteractionFollowup(interaction.token, result.status === "delivered" ? "Your MailDM brief has been sent by direct message." : "A brief already exists for this delivery date. Check your direct messages."))
+          .catch(() => sendDiscordInteractionFollowup(interaction.token, "MailDM could not create that brief. Check /accounts, /settings, and your AI key, then try again."));
+        return;
+      }
+
+      if (command === "delete-my-data") {
+        if (commandOption(interaction, "confirm") !== "DELETE") return interactionResponse(res, "To permanently delete your MailDM Gmail links, encrypted keys, schedules, summaries, and preferences, run /delete-my-data with confirm set to DELETE.", { ephemeral: true });
+        const schedule = await getScheduleByDiscordUserId(discordUser.id);
+        if (schedule?.scheduleCronTaskUid) await deleteHeartbeatJob(schedule.scheduleCronTaskUid, "").catch(() => undefined);
+        await recordAuditEvent({ discordUserId: discordUser.id, eventType: "user_data_deleted", entityType: "discord_user" });
+        await deleteDiscordUserData(user.id);
+        return interactionResponse(res, "Your MailDM data has been permanently deleted. Gmail tokens, encrypted AI credentials, account metadata, schedules, summary history, and preferences have been removed.");
       }
 
       return interactionResponse(res, "That MailDM command is not configured yet. Use /help for the available commands.");

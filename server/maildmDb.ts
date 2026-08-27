@@ -122,9 +122,13 @@ export async function listActiveGmailAccounts(discordUserId: number) {
 export async function disconnectAccount(discordUserId: number, accountId: number) {
   const db = await requiredDb();
   await db
-    .update(connectedAccounts)
-    .set({ status: "disconnected", encryptedAccessToken: null, encryptedRefreshToken: "revoked", updatedAt: new Date() })
+    .delete(connectedAccounts)
     .where(and(eq(connectedAccounts.id, accountId), eq(connectedAccounts.discordUserId, discordUserId)));
+}
+
+export async function deleteDiscordUserData(discordUserId: string) {
+  const db = await requiredDb();
+  await db.delete(discordUsers).where(eq(discordUsers.discordUserId, discordUserId));
 }
 
 export async function markAccountNeedsReauthorization(accountId: number, safeErrorCode: string) {
@@ -235,6 +239,17 @@ export async function saveSummaryHistory(input: { jobId: number; discordUserId: 
   const db = await requiredDb();
   await db.insert(summaryHistory).values({ summaryJobId: input.jobId, discordUserId: input.discordUserId, headline: input.headline, overview: input.overview, itemCount: input.itemCount, noImportantMail: input.noImportantMail, discordMessageId: input.discordMessageId, deliveredAt: new Date() });
   await db.update(summaryJobs).set({ status: "delivered", deliveredAt: new Date(), completedAt: new Date(), updatedAt: new Date() }).where(eq(summaryJobs.id, input.jobId));
+}
+
+export async function recordSummaryFeedback(discordUserId: string, messageId: string, feedback: "up" | "down") {
+  const db = await requiredDb();
+  const user = await getDiscordUser(discordUserId);
+  if (!user) return false;
+  const result = await db
+    .update(summaryHistory)
+    .set({ feedback })
+    .where(and(eq(summaryHistory.discordUserId, user.id), eq(summaryHistory.discordMessageId, messageId)));
+  return result[0].affectedRows === 1;
 }
 
 export async function failSummaryJob(jobId: number, safeErrorCode: string) {

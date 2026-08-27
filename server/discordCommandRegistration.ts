@@ -5,6 +5,7 @@ const choices = (values: readonly string[]): Choice[] => values.map(value => ({ 
 
 const commandDefinitions = [
   { name: "start", description: "Start MailDM private onboarding" },
+  { name: "sample", description: "See a private illustrative MailDM brief" },
   { name: "help", description: "Show MailDM commands" },
   { name: "connect", description: "Connect a Gmail account", options: [{ type: 3, name: "provider", description: "Only Gmail is available now", required: true, choices: [{ name: "Gmail", value: "gmail" }] }, { type: 3, name: "label", description: "A private account label, e.g. Work", required: false }] },
   { name: "accounts", description: "List connected Gmail accounts" },
@@ -14,6 +15,9 @@ const commandDefinitions = [
   { name: "set-model", description: "Select a recommended model", options: [{ type: 3, name: "model", description: "A model from your selected provider", required: true, choices: choices(["gpt-4o-mini", "gpt-4.1-mini", "claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929", "meta/llama-3.3-70b-instruct", "deepseek-ai/deepseek-r1"]) }] },
   { name: "set-ai-key", description: "Securely set your selected provider API key" },
   { name: "set-time", description: "Set daily local delivery time", options: [{ type: 3, name: "time", description: "24-hour time, e.g. 08:00", required: true }, { type: 3, name: "timezone", description: "IANA timezone, e.g. Asia/Kolkata", required: true }] },
+  { name: "settings", description: "View or update MailDM configuration", options: [{ type: 3, name: "provider", description: "Optional AI provider", required: false, choices: choices(["openai", "anthropic", "nvidia"]) }, { type: 3, name: "model", description: "Optional recommended model", required: false, choices: choices(["gpt-4o-mini", "gpt-4.1-mini", "claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929", "meta/llama-3.3-70b-instruct", "deepseek-ai/deepseek-r1"]) }, { type: 3, name: "time", description: "Optional 24-hour time, e.g. 08:00", required: false }, { type: 3, name: "timezone", description: "Optional IANA timezone, e.g. Asia/Kolkata", required: false }] },
+  { name: "summary-now", description: "Create a real Gmail brief now" },
+  { name: "delete-my-data", description: "Permanently delete your MailDM data", options: [{ type: 3, name: "confirm", description: "Type DELETE to confirm", required: true }] },
 ];
 
 export async function registerDiscordCommands() {
