@@ -20,12 +20,26 @@ const commandDefinitions = [
   { name: "delete-my-data", description: "Permanently delete your MailDM data", options: [{ type: 3, name: "confirm", description: "Type DELETE to confirm", required: true }] },
 ];
 
-export async function registerDiscordCommands() {
-  if (!ENV.discordApplicationId || !ENV.discordBotToken) return;
-  const response = await fetch(`https://discord.com/api/v10/applications/${ENV.discordApplicationId}/commands`, {
-    method: "PUT",
-    headers: { Authorization: `Bot ${ENV.discordBotToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify(commandDefinitions),
-  });
-  if (!response.ok) console.error(`[Discord] Command registration failed with ${response.status}`);
+export type DiscordCommandRegistrationResult =
+  | { ok: true }
+  | { ok: false; reason: "missing_configuration" | "network_error" | "discord_error" };
+
+export async function registerDiscordCommands(request: typeof fetch = fetch): Promise<DiscordCommandRegistrationResult> {
+  if (!ENV.discordApplicationId || !ENV.discordBotToken) return { ok: false, reason: "missing_configuration" };
+
+  try {
+    const response = await request(`https://discord.com/api/v10/applications/${ENV.discordApplicationId}/commands`, {
+      method: "PUT",
+      headers: { Authorization: `Bot ${ENV.discordBotToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(commandDefinitions),
+    });
+    if (!response.ok) {
+      console.warn(`[Discord] Command registration returned HTTP ${response.status}; the server will continue running.`);
+      return { ok: false, reason: "discord_error" };
+    }
+    return { ok: true };
+  } catch {
+    console.warn("[Discord] Command registration was unavailable; the server will continue running.");
+    return { ok: false, reason: "network_error" };
+  }
 }
