@@ -16,7 +16,7 @@ The external-trigger scheduler is committed in `856f541fd67df8370570609e53da9147
 
 A subsequent scheduler change adds one bounded retry for a failure that occurs before delivery is attempted. The row records `attempt_count`; only the first failed pre-delivery attempt may be claimed again inside the due window. Immediately before Discord delivery, `delivery_attempted` is set to `1`; any failure during or after that call is not retried for that local date. This prevents duplicate delivery when a response is lost after Discord may have accepted the message. Reauthorization and no-account failures are not retried.
 
-The final commit containing this retry policy and the authoritative go-live checklist must be recorded only after final validation and push to GitHub.
+The retry policy and authoritative go-live checklist are in commit `09f31101ae8a23c6258508f01871c23879635481`; the durable MySQL/TiDB production-store migration and real-engine concurrency test are in commit `281296cff8b8621f6b4ece7e68bc6f425f9f5709`.
 
 ## Hosting and database gate
 
