@@ -27,7 +27,7 @@ export function registerGoogleRoutes(app, { store, env = process.env, oauthClien
       const gmail = google.gmail({ version: 'v1', auth: client });
       const profile = await gmail.users.getProfile({ userId: 'me' });
       const tokenInfo = await client.getTokenInfo(tokens.access_token ?? '');
-      store.saveGmailAccount(discordUserId, {
+      await store.saveGmailAccount(discordUserId, {
         googleSub: tokenInfo.sub ?? profile.data.emailAddress,
         email: profile.data.emailAddress,
         accessToken: encryptSecret(tokens.access_token, env.SESSION_SECRET),

@@ -37,7 +37,7 @@ export function createApp({ store, env = process.env, oauthClient = null, fetchI
       const customId = String(req.body.data?.custom_id ?? '');
       const [prefix, rating] = customId.split(':');
       if (prefix === 'feedback' && (rating === 'helpful' || rating === 'not_helpful')) {
-        store.recordFeedback(req.body.member?.user?.id ?? req.body.user?.id, req.body.message?.id, rating);
+        await store.recordFeedback(req.body.member?.user?.id ?? req.body.user?.id, req.body.message?.id, rating);
         return res.json({ type: 4, data: { content: 'Thanks for the feedback.', flags: 64 } });
       }
     }

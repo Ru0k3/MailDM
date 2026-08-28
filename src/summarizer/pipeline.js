@@ -12,7 +12,7 @@ function isAuthFailure(error) {
 }
 
 export async function runSummaryForUser({ discordUserId, store, env = process.env, fetchImpl = fetch, gmailAdapterFactory = makeGmailAdapter, summarizerFactory = makeSummarizer }) {
-  const accounts = store.listGmailAccounts(discordUserId);
+  const accounts = await store.listGmailAccounts(discordUserId);
   if (!accounts.length) throw new PipelineError('NO_ACCOUNT', 'No Gmail account is connected.');
   const emails = [];
   const authFailures = [];
@@ -23,13 +23,13 @@ export async function runSummaryForUser({ discordUserId, store, env = process.en
       emails.push(...fetched);
     } catch (error) {
       if (isAuthFailure(error)) {
-        store.markAccountReauthRequired(discordUserId, account.email);
+        await store.markAccountReauthRequired(discordUserId, account.email);
         authFailures.push(account);
       } else throw new PipelineError('GMAIL_FAILURE', `Could not read Gmail account ${account.email}.`, error);
     }
   }
   if (authFailures.length && !emails.length) throw new PipelineError('REAUTH_REQUIRED', 'Gmail authorization needs to be renewed.');
-  const settings = store.getSettings(discordUserId);
+  const settings = await store.getSettings(discordUserId);
   const effectiveSettings = { ...settings, aiApiKey: decryptSecret(settings.aiApiKey, env.SESSION_SECRET) };
   let summary;
   try {

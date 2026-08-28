@@ -12,14 +12,15 @@
     "register:commands": "node src/discord/register-commands.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "googleapis": "^155.0.1",
+    "mysql2": "^3.14.3",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^11.10.0",
     "@types/express": "^5.0.3",
     "@types/node": "^24.3.0",
     "supertest": "^7.1.4",

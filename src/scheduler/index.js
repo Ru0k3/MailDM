@@ -20,25 +20,25 @@ export class SummaryScheduler {
     this.running = true;
     const result = { checked: 0, claimed: 0, completed: 0, failed: 0 };
     try {
-      for (const recipient of this.store.listScheduledRecipients()) {
+      for (const recipient of await this.store.listScheduledRecipients()) {
         result.checked += 1;
         if (!isDueAt({ now, summaryTime: recipient.summaryTime, timeZone: recipient.timezone, windowMinutes: this.dueWindowMinutes })) continue;
         const local = localScheduleParts(now, recipient.timezone);
-        const claim = this.store.claimScheduledSummary(recipient.discordUserId, local.localDate);
+        const claim = await this.store.claimScheduledSummary(recipient.discordUserId, local.localDate);
         if (!claim.claimed) continue;
         result.claimed += 1;
         let deliveryAttempted = false;
         try {
           const pipelineResult = await this.pipeline({ discordUserId: recipient.discordUserId, store: this.store, env: this.env });
-          this.store.markDeliveryAttempted(recipient.discordUserId, local.localDate);
+          await this.store.markDeliveryAttempted(recipient.discordUserId, local.localDate);
           deliveryAttempted = true;
           await this.deliver({ discordUserId: recipient.discordUserId, content: pipelineResult.summary, env: this.env });
-          this.store.completeScheduledSummary(recipient.discordUserId, local.localDate, pipelineResult.summary);
+          await this.store.completeScheduledSummary(recipient.discordUserId, local.localDate, pipelineResult.summary);
           result.completed += 1;
         } catch (error) {
           result.failed += 1;
           const code = error instanceof PipelineError ? error.code : error.code ?? 'DELIVERY_FAILURE';
-          this.store.failScheduledSummary(recipient.discordUserId, local.localDate, code, deliveryAttempted);
+          await this.store.failScheduledSummary(recipient.discordUserId, local.localDate, code, deliveryAttempted);
           const failure = { discordUserId: recipient.discordUserId, localDate: local.localDate, code, error };
           this.onFailure(failure);
           if (code === 'REAUTH_REQUIRED') {

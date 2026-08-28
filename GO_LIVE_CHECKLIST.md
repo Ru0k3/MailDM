@@ -1,6 +1,6 @@
 # MailDM go-live checklist
 
-This document is the authoritative setup sequence for the current repository. It matches the code in `main` after the scheduler and retry changes. Do not skip the database prerequisite: the current implementation uses SQLite, and a file-local SQLite database is not a safe shared store for a multi-instance Autoscale deployment.
+This document is the authoritative setup sequence for the current repository. It matches the code in `main` after the scheduler, retry, and durable-database migration. The production entrypoint uses Manus’s managed MySQL/TiDB-compatible database through `DATABASE_URL`; the old SQLite store remains only as an isolated unit-test helper.
 
 ## 1. Current architecture decision
 
@@ -48,15 +48,13 @@ At least one AI provider key must be available unless every user will set a pers
 
 There is no current `SCHEDULER_ENABLED` variable. The old in-process timer was removed; do not set that variable expecting it to control anything.
 
-## 4. Database gate before Autoscale
+## 4. Durable database setup
 
-The current code uses `better-sqlite3` and `DATABASE_PATH`. A single file-local SQLite database is not sufficient if Manus Autoscale creates more than one instance or if the filesystem is ephemeral. Before production go-live on Autoscale, choose one of these paths:
+The production entrypoint now uses `src/db/mysql.js` and requires `DATABASE_URL`. Manus WebDev’s full-stack environment provides a managed MySQL/TiDB-compatible database connection through `DATABASE_URL`; provision or enable the project database from the Manus project’s database/cloud infrastructure settings, then copy the generated connection string into the server environment. The application creates the five required tables automatically on startup using InnoDB-compatible DDL. No manual SQL command is required for a fresh deployment, although the migration artifacts remain in `migrations/` for auditability.
 
-1. Use a Manus-provided durable/shared database and replace the SQLite store with the corresponding adapter, preserving the unique scheduled-claim constraint and transactional updates; or
-2. Use Manus Reserved hosting with a persistent volume and one process; or
-3. Deploy the app to another host with a durable volume and single process.
+The MySQL/TiDB schema enforces `UNIQUE(user_id, local_date, delivery_kind)` and uses a transaction with `SELECT ... FOR UPDATE` for the claim. All foreign keys use `ON DELETE CASCADE`, including `summary_history`, feedback, settings, and Gmail accounts. The production process no longer reads or writes `DATABASE_PATH`; SQLite is retained only for isolated unit tests.
 
-The protected callback solves the sleeping-process problem, but it does **not** by itself make a local SQLite file shared or durable across multiple Autoscale instances. Do not mark production scheduling safe until this database gate is resolved and tested against the actual published hosting configuration.
+This durable shared database is the condition that makes the duplicate-delivery guarantee hold across Autoscale instances. The callback still needs an external scheduler because Autoscale can scale to zero, but no Reserved hosting upgrade is required for scheduler liveness.
 
 ## 5. Exact order of operations
 
