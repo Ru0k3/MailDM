@@ -30,4 +30,6 @@
 - [x] Inspect crash logs and identify why the development server stopped responding.
 - [x] Restart the development server and verify the public preview port is exposed.
 - [x] Save a checkpoint containing the startup-resilience fix.
-- [ ] Push the completed MailDM code to the GitHub repository on a review branch and verify the remote diff.
+- [x] Push the completed MailDM code to the GitHub repository on a review branch and verify the remote diff.
+- [ ] Reconcile the local MailDM history with GitHub main so the review branch has a common ancestor.
+- [ ] Verify the pushed review branch contents with a successful GitHub comparison or pull-request URL and record the branch and commit for review.
