@@ -29,4 +29,4 @@
 - [x] Verify MailDM environment-variable presence without exposing secret values.
 - [x] Inspect crash logs and identify why the development server stopped responding.
 - [x] Restart the development server and verify the public preview port is exposed.
-- [ ] Save a checkpoint containing the startup-resilience fix.
+- [x] Save a checkpoint containing the startup-resilience fix.
