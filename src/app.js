@@ -1,11 +1,11 @@
 import express from 'express';
-import { verifyDiscordRequest } from './security/index.js';
+import { verifyDiscordRequest, verifySchedulerSecret } from './security/index.js';
 import { registerGoogleRoutes } from './oauth/google.js';
 import { handleInteraction } from './discord/commands.js';
 
 const page = (title, body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title></head><body><main><h1>${title}</h1>${body}</main></body></html>`;
 
-export function createApp({ store, env = process.env, oauthClient = null, fetchImpl = fetch, gmailAdapterFactory, summarizerFactory } = {}) {
+export function createApp({ store, env = process.env, oauthClient = null, fetchImpl = fetch, gmailAdapterFactory, summarizerFactory, scheduler = null } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ verify: (req, _res, buffer) => { req.rawBody = buffer.toString('utf8'); } }));
@@ -21,6 +21,13 @@ export function createApp({ store, env = process.env, oauthClient = null, fetchI
   app.get('/gmail-readiness', (_req, res) => res.type('html').send(page('Gmail OAuth readiness', '<h2>Requested scope</h2><p><code>https://www.googleapis.com/auth/gmail.readonly</code></p><h2>Data handling</h2><p>Email content is sent only to the selected AI provider for the requested summary. Email content is treated as untrusted data and never as instructions.</p><h2>User controls</h2><p>Use <code>/disconnect</code> to purge an account or <code>/delete-my-data</code> to remove all MailDM records.</p>')));
 
   registerGoogleRoutes(app, { store, env, oauthClient });
+
+  app.post('/api/scheduler/tick', async (req, res) => {
+    if (!verifySchedulerSecret(req.header('x-scheduler-secret'), env.SCHEDULER_SECRET)) return res.status(401).json({ error: 'unauthorized' });
+    if (!scheduler) return res.status(503).json({ error: 'scheduler_unavailable' });
+    try { return res.json(await scheduler.tick()); }
+    catch (error) { console.error('Scheduler tick failed', error); return res.status(500).json({ error: 'scheduler_failed' }); }
+  });
 
   app.post('/interactions', async (req, res) => {
     const valid = verifyDiscordRequest(req.rawBody, req.header('x-signature-ed25519'), req.header('x-signature-timestamp'), env.DISCORD_PUBLIC_KEY);

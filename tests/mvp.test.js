@@ -178,6 +178,40 @@ test('scheduler surfaces Discord DM delivery failures and records a failed job',
   assert.equal(db.prepare("SELECT status, error_code FROM summary_history WHERE user_id=1").get().status, 'failed');
 });
 
+test('scheduler endpoint rejects missing or wrong secrets before any work', async () => {
+  let calls = 0;
+  const db = openDatabase();
+  const store = makeStore(db);
+  const scheduler = { tick: async () => { calls += 1; return { ok: true }; } };
+  const app = createApp({ store, env: { ...env, SCHEDULER_SECRET: 'scheduler-secret' }, scheduler });
+  await request(app).post('/api/scheduler/tick').expect(401);
+  await request(app).post('/api/scheduler/tick').set('X-Scheduler-Secret', 'wrong').expect(401);
+  assert.equal(calls, 0);
+});
+
+test('authenticated scheduler endpoint processes a due user once across retries', async () => {
+  const db = openDatabase();
+  const store = makeStore(db);
+  store.getOrCreateUser('endpoint-user');
+  store.updateSettings('endpoint-user', { summaryTime: '09:00', timezone: 'UTC' });
+  store.saveGmailAccount('endpoint-user', { googleSub: 'sub', email: 'a@example.com', accessToken: 'enc-a', refreshToken: 'enc-r', scopes: [GMAIL_READONLY_SCOPE] });
+  let deliveries = 0;
+  const scheduler = new SummaryScheduler({
+    store,
+    env: { ...env, SCHEDULER_DUE_WINDOW_MINUTES: '10' },
+    now: () => new Date('2026-08-28T09:08:00.000Z'),
+    pipeline: async () => ({ summary: 'endpoint brief', authFailures: [] }),
+    deliver: async () => { deliveries += 1; }
+  });
+  const app = createApp({ store, env: { ...env, SCHEDULER_SECRET: 'scheduler-secret', SCHEDULER_DUE_WINDOW_MINUTES: '10' }, scheduler });
+  const first = await request(app).post('/api/scheduler/tick').set('X-Scheduler-Secret', 'scheduler-secret').expect(200);
+  const second = await request(app).post('/api/scheduler/tick').set('X-Scheduler-Secret', 'scheduler-secret').expect(200);
+  assert.equal(first.body.completed, 1);
+  assert.equal(second.body.claimed, 0);
+  assert.equal(deliveries, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM summary_history WHERE delivery_kind='scheduled'").get().c, 1);
+});
+
 test('OAuth start route creates a signed Gmail authorization URL', async () => {
   const db = openDatabase();
   const store = makeStore(db);

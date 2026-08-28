@@ -3,16 +3,15 @@ import { runSummaryForUser, PipelineError } from '../summarizer/pipeline.js';
 import { deliverDiscordDM } from '../discord/delivery.js';
 
 export class SummaryScheduler {
-  constructor({ store, env = process.env, intervalMs = 120000, now = () => new Date(), pipeline = runSummaryForUser, deliver = deliverDiscordDM, notify = deliverDiscordDM, onFailure = (failure) => console.error('Scheduled summary failed', failure) }) {
+  constructor({ store, env = process.env, now = () => new Date(), dueWindowMinutes = Number(env.SCHEDULER_DUE_WINDOW_MINUTES ?? 10), pipeline = runSummaryForUser, deliver = deliverDiscordDM, notify = deliverDiscordDM, onFailure = (failure) => console.error('Scheduled summary failed', failure) }) {
     this.store = store;
     this.env = env;
-    this.intervalMs = intervalMs;
     this.now = now;
+    this.dueWindowMinutes = dueWindowMinutes;
     this.pipeline = pipeline;
     this.deliver = deliver;
     this.notify = notify;
     this.onFailure = onFailure;
-    this.timer = null;
     this.running = false;
   }
 
@@ -23,7 +22,7 @@ export class SummaryScheduler {
     try {
       for (const recipient of this.store.listScheduledRecipients()) {
         result.checked += 1;
-        if (!isDueAt({ now, summaryTime: recipient.summaryTime, timeZone: recipient.timezone })) continue;
+        if (!isDueAt({ now, summaryTime: recipient.summaryTime, timeZone: recipient.timezone, windowMinutes: this.dueWindowMinutes })) continue;
         const local = localScheduleParts(now, recipient.timezone);
         if (!this.store.claimScheduledSummary(recipient.discordUserId, local.localDate)) continue;
         result.claimed += 1;
@@ -47,17 +46,5 @@ export class SummaryScheduler {
       }
       return result;
     } finally { this.running = false; }
-  }
-
-  start() {
-    if (this.timer) return this;
-    this.timer = setInterval(() => { void this.tick(); }, this.intervalMs);
-    this.timer.unref?.();
-    return this;
-  }
-
-  stop() {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
   }
 }

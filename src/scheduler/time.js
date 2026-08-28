@@ -9,7 +9,7 @@ export function localScheduleParts(date, timeZone) {
   return { ...local, localDate: `${String(local.year).padStart(4, '0')}-${String(local.month).padStart(2, '0')}-${String(local.day).padStart(2, '0')}`, minuteOfDay: local.hour * 60 + local.minute };
 }
 
-export function isDueAt({ now, summaryTime, timeZone, windowMinutes = 2 }) {
+export function isDueAt({ now, summaryTime, timeZone, windowMinutes = 10 }) {
   if (!summaryTime || !timeZone) return false;
   const match = /^(\d{2}):(\d{2})$/.exec(summaryTime);
   if (!match) return false;

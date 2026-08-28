@@ -1,6 +1,13 @@
 import crypto from 'node:crypto';
 import nacl from 'tweetnacl';
 
+export function verifySchedulerSecret(provided, expected) {
+  if (!provided || !expected) return false;
+  const actual = Buffer.from(String(provided));
+  const target = Buffer.from(String(expected));
+  return actual.length === target.length && crypto.timingSafeEqual(actual, target);
+}
+
 export function verifyDiscordRequest(rawBody, signature, timestamp, publicKey) {
   if (!rawBody || !signature || !timestamp || !publicKey) return false;
   try {
