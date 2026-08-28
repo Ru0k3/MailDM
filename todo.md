@@ -30,3 +30,4 @@
 - [x] Inspect crash logs and identify why the development server stopped responding.
 - [x] Restart the development server and verify the public preview port is exposed.
 - [x] Save a checkpoint containing the startup-resilience fix.
+- [ ] Push the completed MailDM code to the GitHub repository on a review branch and verify the remote diff.
