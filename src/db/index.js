@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS summary_history (
   error_code TEXT,
   claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   completed_at TEXT,
+  delivery_attempted INTEGER NOT NULL DEFAULT 0,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
   UNIQUE(user_id, local_date, delivery_kind)
 );
 `;
@@ -57,6 +59,10 @@ export function openDatabase(filename = process.env.DATABASE_PATH ?? ':memory:')
   db.pragma('foreign_keys = ON');
   db.exec(schema);
   try { db.exec('ALTER TABLE gmail_accounts ADD COLUMN reauth_required INTEGER NOT NULL DEFAULT 0'); } catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; }
+  for (const statement of [
+    'ALTER TABLE summary_history ADD COLUMN delivery_attempted INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE summary_history ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0'
+  ]) { try { db.exec(statement); } catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; } }
   return db;
 }
 
@@ -64,7 +70,8 @@ export function makeStore(db) {
   const ensureUser = db.prepare('INSERT INTO users (discord_user_id) VALUES (?) ON CONFLICT(discord_user_id) DO NOTHING');
   const userId = db.prepare('SELECT id FROM users WHERE discord_user_id = ?');
   const ensureSettings = db.prepare('INSERT INTO settings (user_id) VALUES (?) ON CONFLICT(user_id) DO NOTHING');
-  const claim = db.prepare(`INSERT INTO summary_history (user_id, local_date, delivery_kind, status) VALUES (?, ?, 'scheduled', 'processing') ON CONFLICT(user_id, local_date, delivery_kind) DO NOTHING`);
+  const claim = db.prepare(`INSERT INTO summary_history (user_id, local_date, delivery_kind, status, attempt_count) VALUES (?, ?, 'scheduled', 'processing', 1) ON CONFLICT(user_id, local_date, delivery_kind) DO NOTHING`);
+  const retryClaim = db.prepare(`UPDATE summary_history SET status='processing', attempt_count=attempt_count+1, claimed_at=CURRENT_TIMESTAMP, completed_at=NULL, error_code=NULL WHERE user_id=? AND local_date=? AND delivery_kind='scheduled' AND status='failed' AND delivery_attempted=0 AND attempt_count=1 AND error_code NOT IN ('REAUTH_REQUIRED','NO_ACCOUNT')`);
 
   return {
     getOrCreateUser(discordUserId) {
@@ -110,17 +117,24 @@ export function makeStore(db) {
     },
     claimScheduledSummary(discordUserId, localDate) {
       const id = this.getOrCreateUser(discordUserId);
-      return claim.run(id, localDate).changes === 1;
+      if (claim.run(id, localDate).changes === 1) return { claimed: true, attempt: 1, retried: false };
+      if (retryClaim.run(id, localDate).changes === 1) return { claimed: true, attempt: 2, retried: true };
+      return { claimed: false, attempt: 0, retried: false };
+    },
+    markDeliveryAttempted(discordUserId, localDate) {
+      const user = this.getUser(discordUserId);
+      if (!user) return;
+      db.prepare(`UPDATE summary_history SET delivery_attempted=1 WHERE user_id=? AND local_date=? AND delivery_kind='scheduled' AND status='processing'`).run(user.id, localDate);
     },
     completeScheduledSummary(discordUserId, localDate, summaryText) {
       const user = this.getUser(discordUserId);
       if (!user) return;
       db.prepare(`UPDATE summary_history SET status='complete', summary_text=?, completed_at=CURRENT_TIMESTAMP WHERE user_id=? AND local_date=? AND delivery_kind='scheduled' AND status='processing'`).run(summaryText, user.id, localDate);
     },
-    failScheduledSummary(discordUserId, localDate, errorCode) {
+    failScheduledSummary(discordUserId, localDate, errorCode, deliveryAttempted = false) {
       const user = this.getUser(discordUserId);
       if (!user) return;
-      db.prepare(`UPDATE summary_history SET status='failed', error_code=?, completed_at=CURRENT_TIMESTAMP WHERE user_id=? AND local_date=? AND delivery_kind='scheduled' AND status='processing'`).run(errorCode, user.id, localDate);
+      db.prepare(`UPDATE summary_history SET status='failed', error_code=?, delivery_attempted=CASE WHEN ? THEN 1 ELSE delivery_attempted END, completed_at=CURRENT_TIMESTAMP WHERE user_id=? AND local_date=? AND delivery_kind='scheduled' AND status='processing'`).run(errorCode, deliveryAttempted ? 1 : 0, user.id, localDate);
     },
     markAccountReauthRequired(discordUserId, email) {
       const user = this.getUser(discordUserId);

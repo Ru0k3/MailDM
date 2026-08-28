@@ -10,5 +10,7 @@ CREATE TABLE IF NOT EXISTS summary_history (
   error_code TEXT,
   claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   completed_at TEXT,
+  delivery_attempted INTEGER NOT NULL DEFAULT 0,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
   UNIQUE(user_id, local_date, delivery_kind)
 );

@@ -178,6 +178,44 @@ test('scheduler surfaces Discord DM delivery failures and records a failed job',
   assert.equal(db.prepare("SELECT status, error_code FROM summary_history WHERE user_id=1").get().status, 'failed');
 });
 
+test('scheduler retries one transient pre-delivery failure within the due window', async () => {
+  const db = openDatabase();
+  const store = makeStore(db);
+  store.getOrCreateUser('retry-user');
+  store.updateSettings('retry-user', { summaryTime: '09:00', timezone: 'UTC' });
+  store.saveGmailAccount('retry-user', { googleSub: 'sub', email: 'a@example.com', accessToken: 'enc-a', refreshToken: 'enc-r', scopes: [GMAIL_READONLY_SCOPE] });
+  let pipelineCalls = 0;
+  let deliveries = 0;
+  const scheduler = new SummaryScheduler({
+    store,
+    now: () => new Date('2026-08-28T09:05:00.000Z'),
+    pipeline: async () => { pipelineCalls += 1; if (pipelineCalls === 1) throw new PipelineError('GMAIL_FAILURE', 'temporary'); return { summary: 'recovered brief', authFailures: [] }; },
+    deliver: async () => { deliveries += 1; }
+  });
+  const first = await scheduler.tick();
+  const second = await scheduler.tick(new Date('2026-08-28T09:06:00.000Z'));
+  assert.equal(first.failed, 1);
+  assert.equal(second.completed, 1);
+  assert.equal(deliveries, 1);
+  assert.deepEqual(db.prepare("SELECT status, attempt_count, delivery_attempted FROM summary_history WHERE user_id=1").get(), { status: 'complete', attempt_count: 2, delivery_attempted: 1 });
+});
+
+test('scheduler does not retry after Discord delivery has been attempted', async () => {
+  const db = openDatabase();
+  const store = makeStore(db);
+  store.getOrCreateUser('post-delivery-user');
+  store.updateSettings('post-delivery-user', { summaryTime: '09:00', timezone: 'UTC' });
+  store.saveGmailAccount('post-delivery-user', { googleSub: 'sub', email: 'a@example.com', accessToken: 'enc-a', refreshToken: 'enc-r', scopes: [GMAIL_READONLY_SCOPE] });
+  let deliveries = 0;
+  const scheduler = new SummaryScheduler({ store, now: () => new Date('2026-08-28T09:05:00.000Z'), pipeline: async () => ({ summary: 'brief', authFailures: [] }), deliver: async () => { deliveries += 1; throw Object.assign(new Error('timeout after request'), { code: 'DISCORD_DM_FAILURE' }); } });
+  const first = await scheduler.tick();
+  const second = await scheduler.tick(new Date('2026-08-28T09:06:00.000Z'));
+  assert.equal(first.failed, 1);
+  assert.equal(second.claimed, 0);
+  assert.equal(deliveries, 1);
+  assert.deepEqual(db.prepare("SELECT status, attempt_count, delivery_attempted FROM summary_history WHERE user_id=1").get(), { status: 'failed', attempt_count: 1, delivery_attempted: 1 });
+});
+
 test('scheduler endpoint rejects missing or wrong secrets before any work', async () => {
   let calls = 0;
   const db = openDatabase();
