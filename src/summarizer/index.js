@@ -22,7 +22,7 @@ export class OpenAIAdapter {
   constructor({ apiKey, model = 'gpt-4o-mini', fetchImpl = fetch }) { this.apiKey = apiKey; this.model = model; this.fetchImpl = fetchImpl; }
   async summarize(emails) {
     const response = await this.fetchImpl('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: this.model, temperature: 0.2, messages: buildSummarizerMessages(emails) }) });
-    if (!response.ok) throw new Error(`OpenAI request failed: ${response.status}`);
+    if (!response.ok) { const error = new Error(`OpenAI request failed: ${response.status}`); error.code = [401, 403].includes(response.status) ? 'AI_AUTH_FAILURE' : 'AI_FAILURE'; throw error; }
     const json = await response.json();
     return json.choices?.[0]?.message?.content ?? '';
   }
@@ -33,7 +33,7 @@ export class AnthropicAdapter {
   async summarize(emails) {
     const messages = buildSummarizerMessages(emails);
     const response = await this.fetchImpl('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body: JSON.stringify({ model: this.model, max_tokens: 1200, system: messages[0].content, messages: [{ role: 'user', content: messages[1].content }] }) });
-    if (!response.ok) throw new Error(`Anthropic request failed: ${response.status}`);
+    if (!response.ok) { const error = new Error(`Anthropic request failed: ${response.status}`); error.code = [401, 403].includes(response.status) ? 'AI_AUTH_FAILURE' : 'AI_FAILURE'; throw error; }
     const json = await response.json();
     return json.content?.map((part) => part.text ?? '').join('') ?? '';
   }

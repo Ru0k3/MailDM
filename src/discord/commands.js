@@ -77,7 +77,7 @@ export async function handleInteraction(interaction, deps) {
       const result = await runSummaryForUser({ discordUserId, store: deps.store, env: deps.env, fetchImpl: deps.fetchImpl, gmailAdapterFactory: deps.gmailAdapterFactory, summarizerFactory: deps.summarizerFactory });
       return reply(result.summary, { components: feedbackComponents });
     } catch (error) {
-      if (error instanceof PipelineError) return reply(error.code === 'REAUTH_REQUIRED' ? 'Gmail authorization needs attention. Use `/reauthorize`.' : error.code === 'AI_FAILURE' ? 'Your AI key or provider needs attention. Check `/settings` and try again.' : error.message);
+      if (error instanceof PipelineError) return reply(error.code === 'REAUTH_REQUIRED' ? 'Gmail authorization needs attention. Use `/reauthorize`.' : ['AI_FAILURE', 'AI_AUTH_FAILURE'].includes(error.code) ? 'Your AI key or provider needs attention. Check `/settings` and try again.' : error.message);
       throw error;
     }
   }

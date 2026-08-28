@@ -18,7 +18,7 @@ The scheduler uses a default ten-minute due window and should be called every fi
 
 ## 2. Retry decision and exact semantics
 
-A bounded retry is implemented. The first scheduled claim has `attempt_count=1`. If the pipeline fails before delivery is attempted, the row is `failed` with `delivery_attempted=0`; one later tick inside the ten-minute due window may atomically claim it again, changing it to `attempt_count=2` and `processing`. The retry is not available for reauthorization failures or no-account failures.
+A bounded retry is implemented. The first scheduled claim has `attempt_count=1`. If the pipeline fails before delivery is attempted, the row is `failed` with `delivery_attempted=0`; one later tick inside the ten-minute due window may atomically claim it again, changing it to `attempt_count=2` and `processing`. The retry is not available for reauthorization failures, no-account failures, or permanent AI-key authentication failures (HTTP 401/403). Transient AI failures such as rate limits or provider/server errors remain eligible for the one bounded retry.
 
 Immediately before calling Discord DM delivery, the scheduler sets `delivery_attempted=1`. Any exception during or after that delivery call is permanently non-retryable for that local date, because the request may have reached Discord even if the response was lost. This avoids duplicate briefs at the cost of not retrying an uncertain delivery. The behavior is tested in `tests/mvp.test.js`.
 

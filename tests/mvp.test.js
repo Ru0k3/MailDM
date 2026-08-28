@@ -200,6 +200,22 @@ test('scheduler retries one transient pre-delivery failure within the due window
   assert.deepEqual(db.prepare("SELECT status, attempt_count, delivery_attempted FROM summary_history WHERE user_id=1").get(), { status: 'complete', attempt_count: 2, delivery_attempted: 1 });
 });
 
+test('scheduler does not retry a permanently rejected AI key', async () => {
+  const db = openDatabase();
+  const store = makeStore(db);
+  store.getOrCreateUser('bad-key-user');
+  store.updateSettings('bad-key-user', { summaryTime: '09:00', timezone: 'UTC' });
+  store.saveGmailAccount('bad-key-user', { googleSub: 'sub', email: 'a@example.com', accessToken: 'enc-a', refreshToken: 'enc-r', scopes: [GMAIL_READONLY_SCOPE] });
+  let calls = 0;
+  const scheduler = new SummaryScheduler({ store, now: () => new Date('2026-08-28T09:05:00.000Z'), pipeline: async () => { calls += 1; throw new PipelineError('AI_AUTH_FAILURE', 'invalid key'); }, deliver: async () => {}, notify: async () => {} });
+  const first = await scheduler.tick();
+  const second = await scheduler.tick(new Date('2026-08-28T09:06:00.000Z'));
+  assert.equal(first.failed, 1);
+  assert.equal(second.claimed, 0);
+  assert.equal(calls, 1);
+  assert.deepEqual(db.prepare("SELECT status, attempt_count, delivery_attempted FROM summary_history WHERE user_id=1").get(), { status: 'failed', attempt_count: 1, delivery_attempted: 0 });
+});
+
 test('scheduler does not retry after Discord delivery has been attempted', async () => {
   const db = openDatabase();
   const store = makeStore(db);

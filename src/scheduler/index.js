@@ -43,7 +43,7 @@ export class SummaryScheduler {
           this.onFailure(failure);
           if (code === 'REAUTH_REQUIRED') {
             try { await this.notify({ discordUserId: recipient.discordUserId, content: 'Your Gmail authorization needs attention. Use `/reauthorize` in Discord to reconnect it.', env: this.env }); } catch (notifyError) { this.onFailure({ ...failure, code: 'NOTIFICATION_FAILURE', error: notifyError }); }
-          } else if (code === 'AI_FAILURE') {
+          } else if (code === 'AI_FAILURE' || code === 'AI_AUTH_FAILURE') {
             try { await this.notify({ discordUserId: recipient.discordUserId, content: 'Your AI provider or API key needs attention. Check `/settings` and update it before the next scheduled brief.', env: this.env }); } catch (notifyError) { this.onFailure({ ...failure, code: 'NOTIFICATION_FAILURE', error: notifyError }); }
           }
         }

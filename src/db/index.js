@@ -71,7 +71,7 @@ export function makeStore(db) {
   const userId = db.prepare('SELECT id FROM users WHERE discord_user_id = ?');
   const ensureSettings = db.prepare('INSERT INTO settings (user_id) VALUES (?) ON CONFLICT(user_id) DO NOTHING');
   const claim = db.prepare(`INSERT INTO summary_history (user_id, local_date, delivery_kind, status, attempt_count) VALUES (?, ?, 'scheduled', 'processing', 1) ON CONFLICT(user_id, local_date, delivery_kind) DO NOTHING`);
-  const retryClaim = db.prepare(`UPDATE summary_history SET status='processing', attempt_count=attempt_count+1, claimed_at=CURRENT_TIMESTAMP, completed_at=NULL, error_code=NULL WHERE user_id=? AND local_date=? AND delivery_kind='scheduled' AND status='failed' AND delivery_attempted=0 AND attempt_count=1 AND error_code NOT IN ('REAUTH_REQUIRED','NO_ACCOUNT')`);
+  const retryClaim = db.prepare(`UPDATE summary_history SET status='processing', attempt_count=attempt_count+1, claimed_at=CURRENT_TIMESTAMP, completed_at=NULL, error_code=NULL WHERE user_id=? AND local_date=? AND delivery_kind='scheduled' AND status='failed' AND delivery_attempted=0 AND attempt_count=1 AND error_code NOT IN ('REAUTH_REQUIRED','NO_ACCOUNT','AI_AUTH_FAILURE')`);
 
   return {
     getOrCreateUser(discordUserId) {

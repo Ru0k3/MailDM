@@ -35,7 +35,8 @@ export async function runSummaryForUser({ discordUserId, store, env = process.en
   try {
     summary = await summarizerFactory(effectiveSettings, env, fetchImpl).summarize(emails);
   } catch (error) {
-    throw new PipelineError('AI_FAILURE', 'The configured AI provider rejected or rate-limited the request.', error);
+    const code = error?.code === 'AI_AUTH_FAILURE' ? 'AI_AUTH_FAILURE' : 'AI_FAILURE';
+    throw new PipelineError(code, code === 'AI_AUTH_FAILURE' ? 'The configured AI key was rejected.' : 'The configured AI provider rejected or rate-limited the request.', error);
   }
   return { summary: summary || 'No summary was returned.', authFailures };
 }
