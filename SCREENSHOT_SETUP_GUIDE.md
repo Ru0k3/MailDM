@@ -183,7 +183,7 @@ Never place the scheduler secret in the URL. If it is exposed, generate a new va
 10. Trigger the scheduler again. Confirm no second brief arrives for the same user/local date.
 11. Call the scheduler endpoint once without `X-Scheduler-Secret` and once with a wrong value. Confirm both return `401` and no summary-history claim is created.
 12. Test the Gmail read-only guarantee by confirming the Google consent screen shows only Gmail read access and that MailDM has not sent, changed, labeled, archived, or deleted a Gmail message.
-13. Test `/disconnect` and confirm the connected account and stored tokens disappear. If a second account remains, confirm unrelated account data remains.
+13. Test `/disconnect` and confirm the selected account and stored tokens disappear. If it was the only account, confirm the user, settings, feedback, and summary-history rows remain intact. Only `/delete-my-data` should remove those non-Gmail records.
 14. Test `/delete-my-data` and confirm the user’s settings, Gmail accounts/tokens, feedback, and summary-history records are gone.
 15. Search logs for `SESSION_SECRET`, `SCHEDULER_SECRET`, `DATABASE_URL`, Google client secret, Discord bot token, AI keys, access tokens, and refresh tokens. None may appear.
 

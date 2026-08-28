@@ -145,7 +145,7 @@ Run these in order and record evidence.
 
 9. **AI-key failure.** Configure an invalid or deliberately rate-limited provider key. Trigger the scheduler. Confirm the job is failed and the user receives an AI-provider/key notice rather than a silent skip.
 
-10. **Account purge.** Run `/disconnect` for one connected account. Confirm the account row and encrypted tokens are gone, while unrelated data remains if another account exists. Then run `/delete-my-data` and confirm the user, settings, Gmail accounts, feedback, and `summary_history` rows are all deleted.
+10. **Account purge.** Run `/disconnect` for one connected account. Confirm that the selected Gmail account and encrypted tokens are gone. If it was the only account, confirm the user, settings, feedback, and `summary_history` rows remain intact. Then run `/delete-my-data` and confirm the user and all cascading data are deleted.
 
 11. **Secret hygiene.** Search application logs and repository files for the values of `SESSION_SECRET`, `SCHEDULER_SECRET`, `GOOGLE_CLIENT_SECRET`, `DISCORD_BOT_TOKEN`, AI keys, OAuth tokens, and refresh tokens. None should appear. Confirm `/settings` reports only whether an AI key is configured and never prints the key.
 

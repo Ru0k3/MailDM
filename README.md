@@ -4,7 +4,7 @@ MailDM is a Gmail-only Discord email summarizer MVP. It exposes an Express healt
 
 ## Commands
 
-The command set is `/sample`, `/connect`, `/accounts`, `/disconnect`, `/settings`, `/set-time`, `/set-ai-provider`, `/set-model`, `/set-ai-key`, `/summary-now`, `/delete-my-data`, and `/reauthorize`. The `disconnect` command purges the selected Gmail account’s stored tokens and records; `delete-my-data` removes the user row and all cascading data.
+The command set is `/sample`, `/connect`, `/accounts`, `/disconnect`, `/settings`, `/set-time`, `/set-ai-provider`, `/set-model`, `/set-ai-key`, `/summary-now`, `/delete-my-data`, and `/reauthorize`. The `disconnect` command removes only the selected Gmail account and its stored tokens; it preserves the user row, settings, summary history, and feedback even when it was the last account. Only `delete-my-data` removes the user row and all cascading data.
 
 `/set-time` accepts a 24-hour time plus an optional IANA timezone, such as `09:00` and `America/New_York`.
 

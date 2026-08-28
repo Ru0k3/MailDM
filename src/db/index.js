@@ -147,10 +147,8 @@ export function makeStore(db) {
       const tx = db.transaction(() => {
         if (email) db.prepare('DELETE FROM gmail_accounts WHERE user_id=? AND email=?').run(user.id, email);
         else db.prepare('DELETE FROM gmail_accounts WHERE user_id=?').run(user.id);
-        if (email) {
-          const remaining = db.prepare('SELECT COUNT(*) AS count FROM gmail_accounts WHERE user_id=?').get(user.id).count;
-          if (remaining === 0) db.prepare('DELETE FROM users WHERE id=?').run(user.id);
-        } else db.prepare('DELETE FROM users WHERE id=?').run(user.id);
+        // /disconnect only removes Gmail data; /delete-my-data owns full-user deletion.
+
       });
       tx();
     },
