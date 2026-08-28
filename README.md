@@ -8,6 +8,12 @@ The command set is `/sample`, `/connect`, `/accounts`, `/disconnect`, `/settings
 
 `/set-time` accepts a 24-hour time plus an optional IANA timezone, such as `09:00` and `America/New_York`.
 
+## Multi-provider BYOK
+
+The AI credential flow supports OpenAI, Anthropic, OpenRouter, and labeled HTTPS custom OpenAI-compatible endpoints. Provider selection is explicit; keys are never inferred from prefixes. `/set-ai-key` validates the key by fetching the provider model list, encrypts the key with `SESSION_SECRET`, and stores it in `ai_credentials`. Custom endpoints require HTTPS, a label, and are rejected for localhost, private, link-local, metadata, or embedded-credential URLs.
+
+Use `/models` in a direct message to browse credentials and model buttons. Each button uses a short-lived opaque server-side token and reveals neither the API key nor the base URL. The first `/models` request after 24 hours attempts a model-list refresh; if refresh fails, the existing cached list remains available. `/set-model` accepts an unexpired selection token, and `/remove-api-key` removes only the selected credential. These controls are DM-only. Existing legacy `settings.ai_provider`, `settings.ai_model`, and `settings.ai_api_key` columns remain for one migration release; a legacy key is bridged into `ai_credentials` on first credential lookup.
+
 ## External scheduler trigger
 
 The app no longer starts an in-process `setInterval`. Manus Autoscale may scale the app to zero while idle, so an external scheduler must wake the app periodically. The protected endpoint is:

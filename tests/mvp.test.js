@@ -29,7 +29,8 @@ function appWithKeyPair() {
   const db = openDatabase();
   const store = makeStore(db);
   const testEnv = { ...env, DISCORD_PUBLIC_KEY: Buffer.from(keyPair.publicKey).toString('hex') };
-  return { app: createApp({ store, env: testEnv }), store, db, keyPair, testEnv };
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'gpt-test', name: 'gpt-test' }] }) });
+  return { app: createApp({ store, env: testEnv, fetchImpl }), store, db, keyPair, testEnv };
 }
 
 test('repository defines every requested slash command', () => {
@@ -70,15 +71,17 @@ test('Gmail integration requests read-only scope only', () => {
 
 test('set-ai-key stores an encrypted value and does not echo the secret', async () => {
   const { app, store, keyPair, testEnv } = appWithKeyPair();
-  const body = { type: 2, member: { user: { id: 'u1' } }, data: { name: 'set-ai-key', options: [{ name: 'key', value: 'sk-test-123456789' }] } };
+  const body = { type: 2, member: { user: { id: 'u1' } }, data: { name: 'set-ai-key', options: [{ name: 'provider', value: 'openai' }, { name: 'key', value: 'sk-test-123456789' }] } };
   const signed = signedBody(body, keyPair);
   const response = await request(app).post('/interactions').set('content-type', 'application/json').set('x-signature-ed25519', signed.sig).set('x-signature-timestamp', signed.timestamp).send(signed.raw);
   assert.equal(response.status, 200);
-  assert.match(response.body.data.content, /saved encrypted/);
+  assert.match(response.body.data.content, /saved (encrypted|securely)/);
   assert.doesNotMatch(response.body.data.content, /sk-test/);
-  const settings = store.getSettings('u1');
-  assert.notEqual(settings.aiApiKey, 'sk-test-123456789');
-  assert.match(settings.aiApiKey, /\./);
+  const credentials = store.listAiCredentials('u1');
+  assert.equal(credentials.length, 1);
+  assert.notEqual(credentials[0].encryptedApiKey, 'sk-test-123456789');
+  assert.match(credentials[0].encryptedApiKey, /\./);
+  assert.deepEqual(credentials[0].cachedModels, [{ id: 'gpt-test', name: 'gpt-test' }]);
   assert.equal(testEnv.SESSION_SECRET.length > 0, true);
 });
 
@@ -105,7 +108,7 @@ test('disconnecting the only Gmail account preserves settings and history until 
   db.prepare("INSERT INTO summary_history (user_id, local_date, delivery_kind, status, summary_text, attempt_count) VALUES (?, '2026-08-28', 'scheduled', 'complete', 'past brief', 1)").run(user.id);
   store.disconnectAndPurge('purge-boundary-user', 'only@example.com');
   assert.ok(store.getUser('purge-boundary-user'));
-  assert.deepEqual(store.getSettings('purge-boundary-user'), { summaryTime: '07:30', timezone: 'America/New_York', aiProvider: 'anthropic', aiModel: 'claude-test', aiApiKey: null });
+  assert.deepEqual(store.getSettings('purge-boundary-user'), { summaryTime: '07:30', timezone: 'America/New_York', aiProvider: 'anthropic', aiModel: 'claude-test', aiApiKey: null, activeAiCredentialId: null });
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM gmail_accounts').get().c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM summary_history').get().c, 1);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM feedback').get().c, 1);

@@ -21,6 +21,24 @@ CREATE TABLE IF NOT EXISTS gmail_accounts (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id, email)
 );
+CREATE TABLE IF NOT EXISTS ai_credentials (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  label TEXT,
+  base_url TEXT NOT NULL,
+  encrypted_api_key TEXT NOT NULL,
+  cached_models TEXT NOT NULL DEFAULT '[]',
+  validated_at TEXT,
+  UNIQUE(user_id, provider, base_url)
+);
+CREATE TABLE IF NOT EXISTS model_choices (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  credential_id INTEGER NOT NULL REFERENCES ai_credentials(id) ON DELETE CASCADE,
+  model_id TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   summary_time TEXT NOT NULL DEFAULT '09:00',
@@ -28,6 +46,7 @@ CREATE TABLE IF NOT EXISTS settings (
   ai_provider TEXT NOT NULL DEFAULT 'openai',
   ai_model TEXT NOT NULL DEFAULT 'gpt-4o-mini',
   ai_api_key TEXT,
+  active_ai_credential_id INTEGER REFERENCES ai_credentials(id) ON DELETE SET NULL,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS feedback (
@@ -97,15 +116,31 @@ export function makeStore(db) {
     },
     getSettings(discordUserId) {
       const id = this.getOrCreateUser(discordUserId);
-      return db.prepare('SELECT summary_time AS summaryTime, timezone, ai_provider AS aiProvider, ai_model AS aiModel, ai_api_key AS aiApiKey FROM settings WHERE user_id = ?').get(id);
+      return db.prepare('SELECT summary_time AS summaryTime, timezone, ai_provider AS aiProvider, ai_model AS aiModel, ai_api_key AS aiApiKey, active_ai_credential_id AS activeAiCredentialId FROM settings WHERE user_id = ?').get(id);
     },
     updateSettings(discordUserId, patch) {
       const id = this.getOrCreateUser(discordUserId);
       const current = this.getSettings(discordUserId);
       const next = { ...current, ...patch };
-      db.prepare('UPDATE settings SET summary_time=?, timezone=?, ai_provider=?, ai_model=?, ai_api_key=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(next.summaryTime, next.timezone, next.aiProvider, next.aiModel, next.aiApiKey ?? null, id);
+      db.prepare('UPDATE settings SET summary_time=?, timezone=?, ai_provider=?, ai_model=?, ai_api_key=?, active_ai_credential_id=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(next.summaryTime, next.timezone, next.aiProvider, next.aiModel, next.aiApiKey ?? null, next.activeAiCredentialId ?? null, id);
       return this.getSettings(discordUserId);
     },
+    listAiCredentials(discordUserId) {
+      const user = this.getUser(discordUserId); if (!user) return [];
+      const settings = this.getSettings(discordUserId);
+      return db.prepare('SELECT id, provider, label, base_url AS baseUrl, encrypted_api_key AS encryptedApiKey, cached_models AS cachedModels, validated_at AS validatedAt FROM ai_credentials WHERE user_id=? ORDER BY id').all(user.id).map((row) => ({ ...row, cachedModels: JSON.parse(row.cachedModels || '[]'), active: row.id === settings.activeAiCredentialId, activeModel: row.id === settings.activeAiCredentialId ? settings.aiModel : null }));
+    },
+    saveAiCredential(discordUserId, credential) {
+      const id = this.getOrCreateUser(discordUserId);
+      db.prepare('INSERT INTO ai_credentials (user_id, provider, label, base_url, encrypted_api_key, cached_models, validated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(user_id, provider, base_url) DO UPDATE SET label=excluded.label, encrypted_api_key=excluded.encrypted_api_key, cached_models=excluded.cached_models, validated_at=CURRENT_TIMESTAMP').run(id, credential.provider, credential.label ?? null, credential.baseUrl, credential.encryptedApiKey, JSON.stringify(credential.cachedModels ?? []));
+      return db.prepare('SELECT id FROM ai_credentials WHERE user_id=? AND provider=? AND base_url=?').get(id, credential.provider, credential.baseUrl).id;
+    },
+    refreshAiCredentialModels(discordUserId, credentialId, models) { const user = this.getUser(discordUserId); if (!user) return false; return db.prepare('UPDATE ai_credentials SET cached_models=?, validated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?').run(JSON.stringify(models), credentialId, user.id).changes === 1; },
+    createModelChoice(discordUserId, credentialId, modelId, expiresMinutes = 15) { const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`; const user = this.getUser(discordUserId); if (!user) throw new Error('user_not_found'); db.prepare("INSERT INTO model_choices (token, user_id, credential_id, model_id, expires_at) VALUES (?, ?, ?, ?, datetime('now', ?))").run(token, user.id, credentialId, modelId, `+${expiresMinutes} minutes`); return token; },
+    consumeModelChoice(discordUserId, token) { const user = this.getUser(discordUserId); if (!user) return null; const row = db.prepare("SELECT credential_id AS credentialId, model_id AS modelId FROM model_choices WHERE token=? AND user_id=? AND expires_at>datetime('now')").get(token, user.id); if (!row) return null; db.prepare('DELETE FROM model_choices WHERE token=?').run(token); return row; },
+    setActiveAiCredential(discordUserId, credentialId, model) { const user = this.getUser(discordUserId); if (!user || !db.prepare('SELECT id FROM ai_credentials WHERE id=? AND user_id=?').get(credentialId, user.id)) return false; const current = this.getSettings(discordUserId); this.updateSettings(discordUserId, { ...current, activeAiCredentialId: credentialId, aiModel: model }); return true; },
+    removeAiCredential(discordUserId, credentialId) { const user = this.getUser(discordUserId); if (!user) return { removed: false }; const current = this.getSettings(discordUserId); const wasActive = Number(current.activeAiCredentialId) === Number(credentialId); const result = db.prepare('DELETE FROM ai_credentials WHERE id=? AND user_id=?').run(credentialId, user.id); if (wasActive) this.updateSettings(discordUserId, { ...current, activeAiCredentialId: null, aiApiKey: null }); return { removed: result.changes === 1, wasActive }; },
+    getActiveAiCredential(discordUserId) { const user = this.getUser(discordUserId); if (!user) return null; const settings = this.getSettings(discordUserId); const row = db.prepare('SELECT id, provider, label, base_url AS baseUrl, encrypted_api_key AS encryptedApiKey, cached_models AS cachedModels FROM ai_credentials WHERE id=? AND user_id=?').get(settings.activeAiCredentialId, user.id); return row ? { ...row, cachedModels: JSON.parse(row.cachedModels || '[]'), activeModel: settings.aiModel } : null; },
     recordFeedback(discordUserId, messageId, rating) {
       const id = this.getOrCreateUser(discordUserId);
       db.prepare('INSERT INTO feedback (user_id, message_id, rating) VALUES (?, ?, ?)').run(id, messageId ?? null, rating);

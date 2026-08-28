@@ -30,7 +30,11 @@ export async function runSummaryForUser({ discordUserId, store, env = process.en
   }
   if (authFailures.length && !emails.length) throw new PipelineError('REAUTH_REQUIRED', 'Gmail authorization needs to be renewed.');
   const settings = await store.getSettings(discordUserId);
-  const effectiveSettings = { ...settings, aiApiKey: decryptSecret(settings.aiApiKey, env.SESSION_SECRET) };
+  const activeCredential = store.getActiveAiCredential ? await store.getActiveAiCredential(discordUserId) : null;
+  const effectiveSettings = activeCredential
+    ? { ...settings, aiProvider: activeCredential.provider, aiModel: activeCredential.activeModel, baseUrl: activeCredential.baseUrl, aiApiKey: decryptSecret(activeCredential.encryptedApiKey, env.SESSION_SECRET) }
+    : { ...settings, aiApiKey: decryptSecret(settings.aiApiKey, env.SESSION_SECRET) };
+  if (!effectiveSettings.aiApiKey) throw new PipelineError('NO_AI_PROVIDER', 'No AI provider is configured. Add a key with `/set-ai-key`, then choose a model with `/models`.');
   let summary;
   try {
     summary = await summarizerFactory(effectiveSettings, env, fetchImpl).summarize(emails);
