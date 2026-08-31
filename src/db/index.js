@@ -70,6 +70,13 @@ CREATE TABLE IF NOT EXISTS summary_history (
   attempt_count INTEGER NOT NULL DEFAULT 0,
   UNIQUE(user_id, local_date, delivery_kind)
 );
+CREATE TABLE IF NOT EXISTS processed_source_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  gmail_account_id INTEGER NOT NULL REFERENCES gmail_accounts(id) ON DELETE CASCADE,
+  external_id TEXT NOT NULL,
+  first_processed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(gmail_account_id, external_id)
+);
 `;
 
 export function openDatabase(filename = process.env.DATABASE_PATH ?? ':memory:') {
@@ -190,6 +197,19 @@ export function makeStore(db) {
     deleteAllUserData(discordUserId) {
       const user = this.getUser(discordUserId);
       if (user) db.prepare('DELETE FROM users WHERE id=?').run(user.id);
+    },
+    getProcessedExternalIds(gmailAccountId) {
+      if (!gmailAccountId) return new Set();
+      const rows = db.prepare('SELECT external_id AS externalId FROM processed_source_items WHERE gmail_account_id=?').all(gmailAccountId);
+      return new Set(rows.map((row) => row.externalId));
+    },
+    recordProcessedItems(gmailAccountId, externalIds) {
+      if (!gmailAccountId || !externalIds || !externalIds.length) return;
+      const insert = db.prepare('INSERT OR IGNORE INTO processed_source_items (gmail_account_id, external_id) VALUES (?, ?)');
+      const tx = db.transaction((ids) => {
+        for (const id of ids) insert.run(gmailAccountId, id);
+      });
+      tx(externalIds);
     },
     close() { db.close(); }
   };

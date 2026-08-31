@@ -16,11 +16,18 @@ export async function runSummaryForUser({ discordUserId, store, env = process.en
   if (!accounts.length) throw new PipelineError('NO_ACCOUNT', 'No Gmail account is connected.');
   const emails = [];
   const authFailures = [];
+  const accountItemsToRecord = [];
+
   for (const account of accounts) {
     if (account.reauthRequired) { authFailures.push(account); continue; }
     try {
       const fetched = await gmailAdapterFactory({ account, env }).listRecentMessages({ maxResults: 10 });
-      emails.push(...fetched);
+      const processedSet = store.getProcessedExternalIds ? await store.getProcessedExternalIds(account.id) : new Set();
+      const newMessages = fetched.filter((msg) => msg.id && !processedSet.has(msg.id));
+      emails.push(...newMessages);
+      if (newMessages.length) {
+        accountItemsToRecord.push({ accountId: account.id, externalIds: newMessages.map((msg) => msg.id) });
+      }
     } catch (error) {
       if (isAuthFailure(error)) {
         await store.markAccountReauthRequired(discordUserId, account.email);
@@ -29,6 +36,9 @@ export async function runSummaryForUser({ discordUserId, store, env = process.en
     }
   }
   if (authFailures.length && !emails.length) throw new PipelineError('REAUTH_REQUIRED', 'Gmail authorization needs to be renewed.');
+  if (!emails.length) {
+    return { summary: 'You have no new unread emails since your last summary.', authFailures, newEmailCount: 0 };
+  }
   const settings = await store.getSettings(discordUserId);
   const activeCredential = store.getActiveAiCredential ? await store.getActiveAiCredential(discordUserId) : null;
   const effectiveSettings = activeCredential
@@ -42,5 +52,10 @@ export async function runSummaryForUser({ discordUserId, store, env = process.en
     const code = error?.code === 'AI_AUTH_FAILURE' ? 'AI_AUTH_FAILURE' : 'AI_FAILURE';
     throw new PipelineError(code, code === 'AI_AUTH_FAILURE' ? 'The configured AI key was rejected.' : 'The configured AI provider rejected or rate-limited the request.', error);
   }
-  return { summary: summary || 'No summary was returned.', authFailures };
+  if (store.recordProcessedItems) {
+    for (const item of accountItemsToRecord) {
+      await store.recordProcessedItems(item.accountId, item.externalIds);
+    }
+  }
+  return { summary: summary || 'No summary was returned.', authFailures, newEmailCount: emails.length };
 }
