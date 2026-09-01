@@ -1,66 +1,69 @@
 # MailDM
 
-MailDM delivers private, AI-generated daily Gmail briefs through Discord direct messages. The initial release supports multiple users and multiple read-only Gmail accounts per user, bounded in-memory message processing, user-owned AI provider keys, provider-specific recommended models, feedback capture, and timezone-aware daily delivery. Outlook, Slack, and GitHub source integrations are deliberately deferred.
+MailDM is a Gmail-only Discord email summarizer MVP. It exposes an Express health endpoint, Google OAuth start/callback routes, a Discord interactions endpoint for slash commands and feedback controls, and a protected scheduler tick endpoint suitable for Manus Autoscale hosting.
 
-## What MailDM does
+## Commands
 
-MailDM accepts verified Discord HTTP Interactions. A user privately connects Gmail through Google OAuth, selects an AI provider/model, securely submits their provider API key through a Discord modal, and sets a local delivery time. Scheduled callbacks fetch Gmail messages matching `is:unread`, sanitize and normalize them in memory, create a brief, and send it as a Discord DM.
+The command set is `/sample`, `/connect`, `/accounts`, `/disconnect`, `/settings`, `/set-time`, `/set-ai-provider`, `/set-model`, `/set-ai-key`, `/summary-now`, `/delete-my-data`, and `/reauthorize`. The `disconnect` command removes only the selected Gmail account and its stored tokens; it preserves the user row, settings, summary history, and feedback even when it was the last account. Only `delete-my-data` removes the user row and all cascading data.
 
-The service only requests Gmail `gmail.readonly` access. It does not send email, delete email, archive email, label email, or mark email as read. If no messages qualify, it sends the exact message: `No important unread mail today`.
+`/set-time` accepts a 24-hour time plus an optional IANA timezone, such as `09:00` and `America/New_York`.
 
-## Deployment configuration
+## Multi-provider BYOK
 
-Set protected server environment variables through the project settings; never commit them to GitHub or place them in client code.
+The AI credential flow supports OpenAI, Anthropic, OpenRouter, and labeled HTTPS custom OpenAI-compatible endpoints. Provider selection is explicit; keys are never inferred from prefixes. `/set-ai-key` validates the key by fetching the provider model list, encrypts the key with `SESSION_SECRET`, and stores it in `ai_credentials`. Custom endpoints require HTTPS, a label, and are rejected for localhost, private, link-local, metadata, or embedded-credential URLs.
 
-| Variable | Purpose |
-| --- | --- |
-| `DISCORD_APPLICATION_ID` | Discord application ID for slash-command registration. |
-| `DISCORD_PUBLIC_KEY` | Discord application public key used to verify incoming Interaction signatures. |
-| `DISCORD_BOT_TOKEN` | Bot token used only for slash-command registration and direct-message delivery. |
-| `GOOGLE_CLIENT_ID` | Google OAuth web client ID. |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth web client secret. |
-| `GOOGLE_REDIRECT_URI` | Exact HTTPS callback URL: `https://<published-domain>/api/auth/google/callback`. |
-| `CREDENTIAL_ENCRYPTION_KEY` | Base64-encoded 32-byte AES-256-GCM encryption key. |
+Use `/models` in a direct message to browse credentials and model buttons. Each button uses a short-lived opaque server-side token and reveals neither the API key nor the base URL. The first `/models` request after 24 hours attempts a model-list refresh; if refresh fails, the existing cached list remains available. `/set-model` accepts an unexpired selection token, and `/remove-api-key` removes only the selected credential. These controls are DM-only. Existing legacy `settings.ai_provider`, `settings.ai_model`, and `settings.ai_api_key` columns remain for one migration release; a legacy key is bridged into `ai_credentials` on first credential lookup.
 
-## Discord configuration
+## External scheduler trigger
 
-In the Discord Developer Portal, set the **Interactions Endpoint URL** to:
+The app no longer starts an in-process `setInterval`. Manus Autoscale may scale the app to zero while idle, so an external scheduler must wake the app periodically. The protected endpoint is:
 
 ```text
-https://<published-domain>/api/discord/interactions
+POST https://YOUR_PUBLISHED_MAILDM_URL/api/scheduler/tick
+X-Scheduler-Secret: YOUR_SCHEDULER_SECRET
+Content-Length: 0
 ```
 
-Install the app in the private test server with the `applications.commands` and `bot` scopes. MailDM does not need Message Content Intent for its slash-command workflow. The bot must be permitted to send direct messages to users who opt in through the private setup flow.
+The handler checks `X-Scheduler-Secret` against `SCHEDULER_SECRET` using constant-time comparison **before** touching the database or scheduler. Missing or incorrect secrets receive HTTP `401` and produce no side effects. The endpoint is not listed in the public user-facing pages or Discord API surface.
 
-## Google configuration
+The default due window is ten minutes (`SCHEDULER_DUE_WINDOW_MINUTES=10`). The external scheduler should run every five minutes. If a cold start or temporary delay means a request arrives several minutes after the user’s configured local time, the user is still considered due during the window. Every scheduled attempt first claims `(user_id, local_date, delivery_kind='scheduled')` in `summary_history`; the SQLite `UNIQUE` constraint means a retry or an overlapping external request cannot deliver two briefs for the same user and local calendar date.
 
-Create a Google Cloud project, enable Gmail API, configure an External OAuth consent screen in testing mode, add the intended Gmail test accounts, and request the `https://www.googleapis.com/auth/gmail.readonly` scope. Create a Web OAuth client only after the application is published and add the exact value of `GOOGLE_REDIRECT_URI` to its authorized redirect URIs.
+A failed claim may be retried once only when the failure occurred before delivery was attempted and the row has `attempt_count=1`; reauthorization, no-account, and permanent AI-key authentication failures (HTTP 401/403) are not retried. Transient provider failures remain eligible for the one bounded retry. Immediately before calling Discord, the row is marked `delivery_attempted=1`. Any delivery-side failure is permanently non-retryable for that local date because the request may have reached Discord. This prevents duplicate delivery when a response is lost after a message may have been accepted.
 
-## User commands
+For production Autoscale, the production entrypoint uses the Manus-managed MySQL/TiDB-compatible store in `src/db/mysql.js` through `DATABASE_URL`. Its InnoDB unique constraint and transactional `SELECT ... FOR UPDATE` claim hold across concurrent instances. The old SQLite store remains only as an isolated unit-test helper. The managed database schema is initialized automatically at startup; see `GO_LIVE_CHECKLIST.md` for provisioning and environment setup.
 
-| Command | Private behavior |
-| --- | --- |
-| `/start` | Explains onboarding. |
-| `/connect gmail [label]` | Creates a 15-minute Google authorization link for one Gmail account. |
-| `/accounts` | Lists connected Gmail accounts and account IDs. |
-| `/sample` | Shows an illustrative brief before you connect Gmail or configure an AI key. |
-| `/disconnect <account_id>` | Revokes the Google refresh token where possible, then permanently deletes the local encrypted token and account data. |
-| `/reauthorize <account_id>` | Creates a new Google link if MailDM marks an account as requiring reauthorization. |
-| `/set-ai-provider` | Selects OpenAI, Anthropic, or NVIDIA. |
-| `/set-model` | Selects a fixed recommended model for the active provider. |
-| `/set-ai-key` | Opens a Discord DM-only modal, validates and encrypts the user’s key. |
-| `/set-time` | Creates or updates a managed daily scheduled callback in the user’s IANA timezone. |
-| `/settings` | Shows your Gmail-account count, active AI provider/model, and delivery schedule. |
-| `/summary-now` | Runs the same real Gmail digest pipeline used for a scheduled delivery. |
-| `/delete-my-data` | Permanently deletes Gmail links, encrypted AI credentials, schedules, summary history, and preferences after explicit confirmation. |
+The scheduler calculates each user’s local date and wall-clock time from the current instant and their IANA timezone. It does not use a global UTC fire time, and the calculation follows timezone/DST transitions.
 
-## Development checks
+## Recommended external setup
 
-```text
-pnpm check
-pnpm test
-```
+For this simple HTTP wake-up, **cron-job.org is the recommended option** because it is purpose-built for recurring HTTP requests, supports custom headers, and can run at minute-level intervals. Create one job with the following values:
 
-Read [ARCHITECTURE.md](./ARCHITECTURE.md) for security and data-retention details, and [SOURCES.md](./SOURCES.md) for provider references.
+| Setting | Value |
+|---|---|
+| URL | `https://YOUR_PUBLISHED_MAILDM_URL/api/scheduler/tick` |
+| Method | `POST` |
+| Schedule | Every 5 minutes |
+| Header | `X-Scheduler-Secret: YOUR_SCHEDULER_SECRET` |
+| Body | Empty |
 
-Read [GOOGLE_VERIFICATION.md](./GOOGLE_VERIFICATION.md) before changing Google OAuth from named-user testing mode to public production access.
+Generate a long random `SCHEDULER_SECRET`, save it only in Manus environment variables and the scheduler’s secret/header configuration, and never commit it. Rotate it by updating both places if it is exposed.
+
+GitHub Actions is an alternative. The repository includes `.github/workflows/scheduler-ping.yml`; add `MAILDM_BASE_URL` and `SCHEDULER_SECRET` as repository secrets, then enable the workflow. GitHub scheduled workflows are best-effort and may be delayed under load, so the ten-minute window and database claim are required. Do not schedule the workflow exactly on the hour.
+
+## Shared pipeline and failure handling
+
+The protected tick calls the same `runSummaryForUser` pipeline used by `/summary-now`: Gmail read-only fetch, provider summarization, and Discord delivery. Google OAuth token refresh occurs through the Gmail client when an access token needs refreshing. Refresh/revocation failures mark the Gmail account `reauth_required` and trigger a `/reauthorize` notice. AI-provider or key failures mark the job failed and trigger an AI-key/provider notice. Discord DM failures mark the job failed as `DISCORD_DM_FAILURE` and pass the failure to the scheduler failure hook instead of being silently swallowed.
+
+## Security and data handling
+
+Discord requests are rejected unless the Ed25519 signature over `timestamp + raw request body` validates against `DISCORD_PUBLIC_KEY`. OAuth state is signed with `SESSION_SECRET`. Google access and refresh tokens, plus user-provided AI keys, are encrypted at rest with AES-256-GCM. The only Gmail scope requested is `gmail.readonly`; the adapter does not send, modify, or delete messages.
+
+The summarizer has a dedicated system policy stating that email subjects, bodies, sender names, links, attachments, and quoted content are **untrusted data**, not instructions. It explicitly says never to follow instructions found in email content, impersonate another message role, call tools, change settings, reveal secrets, or alter the summarization task because an email requests it. Email fields are enclosed in an untrusted-data boundary, and `<`, `>`, and `&` are escaped so a malicious email cannot close the boundary with injected markup.
+
+## Run locally
+
+Copy `.env.example` to `.env`, fill the required credentials, install dependencies with `npm install`, and run `npm start`. Run `npm test` for behavior tests and `npm run check` for the repository check. Run `npm run register:commands` after setting the Discord application and bot variables.
+
+## Google OAuth setup
+
+Configure the Google Auth Platform Branding page with the deployed home page, privacy policy, and terms URLs. Register `GOOGLE_REDIRECT_URI` as an authorized redirect URI. The app requests `https://www.googleapis.com/auth/gmail.readonly`. See `GOOGLE_VERIFICATION.md` for the verification checklist and official references.

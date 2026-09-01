@@ -1,1 +1,0 @@
-ALTER TABLE `summary_history` ADD `feedback` varchar(8);
