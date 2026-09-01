@@ -5,6 +5,7 @@ import { makeMysqlStore } from '../src/db/mysql.js';
 import { runSummaryForUser, PipelineError } from '../src/summarizer/pipeline.js';
 import { SummaryScheduler } from '../src/scheduler/index.js';
 import { encryptSecret } from '../src/security/index.js';
+import { handleInteraction } from '../src/discord/commands.js';
 
 const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 const env = { SESSION_SECRET: 'test-session-secret-32-chars-long!!', SCHEDULER_SECRET: 'test-scheduler-secret' };
@@ -297,4 +298,55 @@ test('failed DM delivery in scheduler does NOT record processed IDs', async () =
   const processed2 = store.getProcessedExternalIds(accounts[0].id);
   assert.equal(processed2.size, 1);
   assert.ok(processed2.has('msg1'));
+});
+
+test('/summary-now records processed IDs post-delivery and isolates failures', async () => {
+  const db = openDatabase();
+  const store = makeStore(db);
+  const discordUserId = setupUserWithKey(store, 'cmd-summary-user');
+
+  let shouldFail = true;
+  const summarizerFactory = () => ({
+    summarize: async () => {
+      if (shouldFail) throw new Error('AI rate limited');
+      return 'Manual Summary';
+    }
+  });
+
+  const gmailAdapterFactory = () => ({
+    listRecentMessages: async () => [{ id: 'msg_cmd_1' }]
+  });
+
+  const interaction = {
+    type: 2,
+    user: { id: discordUserId },
+    data: { name: 'summary-now' }
+  };
+
+  // Run 1: /summary-now with AI failure -> error reply returned, IDs NOT recorded
+  const reply1 = await handleInteraction(interaction, {
+    store,
+    env,
+    gmailAdapterFactory,
+    summarizerFactory
+  });
+
+  assert.equal(reply1.data.content, 'Your AI provider needs attention. Check `/models` and `/set-ai-key`.');
+  const accounts = store.listGmailAccounts(discordUserId);
+  const processed1 = store.getProcessedExternalIds(accounts[0].id);
+  assert.equal(processed1.size, 0);
+
+  // Run 2: /summary-now succeeds -> reply returned, IDs recorded
+  shouldFail = false;
+  const reply2 = await handleInteraction(interaction, {
+    store,
+    env,
+    gmailAdapterFactory,
+    summarizerFactory
+  });
+
+  assert.equal(reply2.data.content, 'Manual Summary');
+  const processed2 = store.getProcessedExternalIds(accounts[0].id);
+  assert.equal(processed2.size, 1);
+  assert.ok(processed2.has('msg_cmd_1'));
 });
