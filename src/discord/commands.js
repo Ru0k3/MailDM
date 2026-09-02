@@ -116,8 +116,15 @@ export async function handleInteraction(interaction, deps) {
   if (name === 'set-model') { const choice = await deps.store.consumeModelChoice(discordUserId, String(option(interaction, 'selection'))); if (!choice) return reply('That model selection expired. Run `/models` again.'); if (!await deps.store.setActiveAiCredential(discordUserId, choice.credentialId, choice.modelId)) return reply('That credential is no longer available. Run `/models` again.'); return reply(`Active model set to ${choice.modelId}.`); }
   if (name === 'remove-api-key') { const selected = String(option(interaction, 'credential')); const choice = await deps.store.consumeCredentialChoice(discordUserId, selected); if (!choice) return reply('That credential selection expired. Run `/models` again.'); const result = await deps.store.removeAiCredential(discordUserId, choice.credentialId); if (!result.removed) return reply('Credential not found. Run `/models` to refresh the list.'); return reply(result.wasActive ? 'Credential removed. Your active model was cleared; run `/models` to choose a new model.' : 'Credential removed. Gmail, settings, schedule, history, and feedback were not changed.'); }
   if (name === 'summary-now') {
-    const accounts = await deps.store.listGmailAccounts(discordUserId); if (!accounts.length) return reply('No Gmail account connected. Use `/connect` first.`');
-    try { const result = await runSummaryForUser({ discordUserId, store: deps.store, env: deps.env, fetchImpl: deps.fetchImpl, gmailAdapterFactory: deps.gmailAdapterFactory, summarizerFactory: deps.summarizerFactory }); return reply(result.summary, { components: feedbackComponents }); }
+    const accounts = await deps.store.listGmailAccounts(discordUserId); if (!accounts.length) return reply('No Gmail account connected. Use `/connect` first.');
+    try {
+      const result = await runSummaryForUser({ discordUserId, store: deps.store, env: deps.env, fetchImpl: deps.fetchImpl, gmailAdapterFactory: deps.gmailAdapterFactory, summarizerFactory: deps.summarizerFactory, autoRecord: false });
+      const response = reply(result.summary, { components: feedbackComponents });
+      if (typeof result?.recordProcessedItems === 'function') {
+        await result.recordProcessedItems();
+      }
+      return response;
+    }
     catch (error) { if (error instanceof PipelineError) return reply(error.code === 'REAUTH_REQUIRED' ? 'Gmail authorization needs attention. Use `/reauthorize`.' : error.code === 'NO_AI_PROVIDER' ? error.message : ['AI_FAILURE', 'AI_AUTH_FAILURE'].includes(error.code) ? 'Your AI provider needs attention. Check `/models` and `/set-ai-key`.' : error.message); throw error; }
   }
   return reply('Unknown command.');

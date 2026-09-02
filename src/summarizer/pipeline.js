@@ -11,7 +11,7 @@ function isAuthFailure(error) {
   return text.includes('401') || text.includes('unauthorized') || text.includes('invalid_grant') || text.includes('refresh token');
 }
 
-export async function runSummaryForUser({ discordUserId, store, env = process.env, fetchImpl = fetch, gmailAdapterFactory = makeGmailAdapter, summarizerFactory = makeSummarizer }) {
+export async function runSummaryForUser({ discordUserId, store, env = process.env, fetchImpl = fetch, gmailAdapterFactory = makeGmailAdapter, summarizerFactory = makeSummarizer, autoRecord = false }) {
   const accounts = await store.listGmailAccounts(discordUserId);
   if (!accounts.length) throw new PipelineError('NO_ACCOUNT', 'No Gmail account is connected.');
   const emails = [];
@@ -35,10 +35,21 @@ export async function runSummaryForUser({ discordUserId, store, env = process.en
       } else throw new PipelineError('GMAIL_FAILURE', `Could not read Gmail account ${account.email}.`, error);
     }
   }
+
+  const recordProcessedItems = async () => {
+    if (store.recordProcessedItems) {
+      for (const item of accountItemsToRecord) {
+        await store.recordProcessedItems(item.accountId, item.externalIds);
+      }
+    }
+  };
+
   if (authFailures.length && !emails.length) throw new PipelineError('REAUTH_REQUIRED', 'Gmail authorization needs to be renewed.');
   if (!emails.length) {
-    return { summary: 'You have no new unread emails since your last summary.', authFailures, newEmailCount: 0 };
+    if (autoRecord) await recordProcessedItems();
+    return { summary: 'You have no new unread emails since your last summary.', authFailures, newEmailCount: 0, recordProcessedItems };
   }
+
   const settings = await store.getSettings(discordUserId);
   const activeCredential = store.getActiveAiCredential ? await store.getActiveAiCredential(discordUserId) : null;
   const effectiveSettings = activeCredential
@@ -52,10 +63,7 @@ export async function runSummaryForUser({ discordUserId, store, env = process.en
     const code = error?.code === 'AI_AUTH_FAILURE' ? 'AI_AUTH_FAILURE' : 'AI_FAILURE';
     throw new PipelineError(code, code === 'AI_AUTH_FAILURE' ? 'The configured AI key was rejected.' : 'The configured AI provider rejected or rate-limited the request.', error);
   }
-  if (store.recordProcessedItems) {
-    for (const item of accountItemsToRecord) {
-      await store.recordProcessedItems(item.accountId, item.externalIds);
-    }
-  }
-  return { summary: summary || 'No summary was returned.', authFailures, newEmailCount: emails.length };
+
+  if (autoRecord) await recordProcessedItems();
+  return { summary: summary || 'No summary was returned.', authFailures, newEmailCount: emails.length, recordProcessedItems };
 }

@@ -29,10 +29,13 @@ export class SummaryScheduler {
         result.claimed += 1;
         let deliveryAttempted = false;
         try {
-          const pipelineResult = await this.pipeline({ discordUserId: recipient.discordUserId, store: this.store, env: this.env });
+          const pipelineResult = await this.pipeline({ discordUserId: recipient.discordUserId, store: this.store, env: this.env, autoRecord: false });
           await this.store.markDeliveryAttempted(recipient.discordUserId, local.localDate);
           deliveryAttempted = true;
           await this.deliver({ discordUserId: recipient.discordUserId, content: pipelineResult.summary, env: this.env });
+          if (typeof pipelineResult?.recordProcessedItems === 'function') {
+            await pipelineResult.recordProcessedItems();
+          }
           await this.store.completeScheduledSummary(recipient.discordUserId, local.localDate, pipelineResult.summary);
           result.completed += 1;
         } catch (error) {
