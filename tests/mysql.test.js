@@ -1,9 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import mysql from 'mysql2/promise';
-import { makeMysqlStore } from '../src/db/mysql.js';
+import { makeMysqlStore, buildPoolConfig } from '../src/db/mysql.js';
 
 const url = process.env.MYSQL_TEST_URL;
+
+test('buildPoolConfig parses SSL params from URI correctly', () => {
+  // Non-SSL URI
+  const plain = buildPoolConfig('mysql://user:pass@localhost:3306/maildm');
+  assert.equal(plain.uri, 'mysql://user:pass@localhost:3306/maildm');
+  assert.equal(plain.ssl, undefined);
+
+  // Aiven-style ssl-mode=REQUIRED URI
+  const aiven = buildPoolConfig('mysql://user:pass@aiven-host:12345/defaultdb?ssl-mode=REQUIRED');
+  assert.equal(aiven.uri, 'mysql://user:pass@aiven-host:12345/defaultdb');
+  assert.deepEqual(aiven.ssl, { rejectUnauthorized: false });
+
+  // Strict verification URI
+  const verify = buildPoolConfig('mysql://user:pass@aiven-host:12345/defaultdb?ssl-mode=VERIFY_CA');
+  assert.equal(verify.uri, 'mysql://user:pass@aiven-host:12345/defaultdb');
+  assert.deepEqual(verify.ssl, { rejectUnauthorized: true });
+});
 
 test('MySQL/TiDB claim is atomic across two independent store instances', { skip: !url }, async () => {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -18,7 +35,7 @@ test('MySQL/TiDB claim is atomic across two independent store instances', { skip
       storeB.claimScheduledSummary(discordUserId, '2099-01-02')
     ]);
     assert.equal(claims.filter((claim) => claim.claimed).length, 1);
-    const verification = await mysql.createConnection(url);
+    const verification = await mysql.createConnection(buildPoolConfig(url));
     const [rows] = await verification.query('SELECT COUNT(*) AS count FROM summary_history h JOIN users u ON u.id=h.user_id WHERE u.discord_user_id=? AND h.local_date=?', [discordUserId, '2099-01-02']);
     assert.equal(Number(rows[0].count), 1);
     await verification.end();
@@ -33,7 +50,7 @@ test('MySQL/TiDB disconnect preserves non-Gmail data and delete cascades it', { 
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const discordUserId = `mysql-purge-${suffix}`;
   const store = await makeMysqlStore(url);
-  const connection = await mysql.createConnection(url);
+  const connection = await mysql.createConnection(buildPoolConfig(url));
   try {
     await store.getOrCreateUser(discordUserId);
     await store.saveGmailAccount(discordUserId, { googleSub: `sub-${suffix}`, email: `${suffix}@example.com`, accessToken: 'encrypted-access', refreshToken: 'encrypted-refresh', scopes: ['https://www.googleapis.com/auth/gmail.readonly'] });

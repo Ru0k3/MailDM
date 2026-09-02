@@ -14,9 +14,43 @@ const schemaStatements = [
 
 function parseModels(value) { try { return Array.isArray(value) ? value : JSON.parse(value || '[]'); } catch { return []; } }
 
+export function buildPoolConfig(connectionString) {
+  let uri = connectionString;
+  let ssl;
+
+  try {
+    const parsed = new URL(connectionString);
+    const sslMode = (parsed.searchParams.get('ssl-mode') || parsed.searchParams.get('sslmode') || '').toUpperCase();
+    const sslParam = parsed.searchParams.get('ssl');
+    const envSsl = process.env.MYSQL_SSL === 'true';
+
+    if (sslMode || sslParam || envSsl) {
+      parsed.searchParams.delete('ssl-mode');
+      parsed.searchParams.delete('sslmode');
+      parsed.searchParams.delete('ssl');
+      uri = parsed.toString();
+
+      let rejectUnauthorized = false;
+      if (process.env.MYSQL_SSL_REJECT_UNAUTHORIZED === 'true' || ['VERIFY_CA', 'VERIFY_IDENTITY'].includes(sslMode)) {
+        rejectUnauthorized = true;
+      }
+
+      ssl = { rejectUnauthorized };
+      if (process.env.MYSQL_CA) {
+        ssl.ca = process.env.MYSQL_CA;
+      }
+    }
+  } catch {
+    // If not a valid URL string, pass unchanged
+  }
+
+  return { uri, ...(ssl ? { ssl } : {}) };
+}
+
 export async function makeMysqlStore(connectionString = process.env.DATABASE_URL) {
   if (!connectionString) throw new Error('DATABASE_URL is required for the production database');
-  const pool = mysql.createPool({ uri: connectionString, waitForConnections: true, connectionLimit: 5, queueLimit: 0, timezone: 'Z' });
+  const poolConfig = buildPoolConfig(connectionString);
+  const pool = mysql.createPool({ ...poolConfig, waitForConnections: true, connectionLimit: 5, queueLimit: 0, timezone: 'Z' });
   for (const statement of schemaStatements) await pool.query(statement);
   try { await pool.query('ALTER TABLE settings ADD COLUMN active_ai_credential_id BIGINT UNSIGNED NULL'); } catch (error) { if (!/duplicate|exists/i.test(error.message)) throw error; }
   try { await pool.query('ALTER TABLE settings ADD CONSTRAINT fk_settings_active_credential FOREIGN KEY (active_ai_credential_id) REFERENCES ai_credentials(id) ON DELETE SET NULL'); } catch (error) { if (!/duplicate|exists|already has/i.test(error.message)) throw error; }
@@ -27,7 +61,7 @@ export async function makeMysqlStore(connectionString = process.env.DATABASE_URL
       FROM settings s LEFT JOIN ai_credentials c ON c.user_id=s.user_id
       WHERE s.ai_api_key IS NOT NULL AND c.id IS NULL`);
     for (const legacy of legacyRows) {
-      const baseUrl = legacy.provider === 'anthropic' ? ANTHROPIC_BASE_URL : OPENAI_BASE_URL;
+      const baseUrl = legacy.provider === 'anthropic' ? 'https://api.anthropic.com/v1' : 'https://api.openai.com/v1';
       const connection = await pool.getConnection();
       try {
         await connection.beginTransaction();
@@ -54,19 +88,6 @@ export async function makeMysqlStore(connectionString = process.env.DATABASE_URL
   async function getCredentialRows(userId) {
     const [rows] = await pool.query('SELECT id, provider, label, base_url AS baseUrl, encrypted_api_key AS encryptedApiKey, cached_models AS cachedModels, validated_at AS validatedAt FROM ai_credentials WHERE user_id=? ORDER BY provider, label, id', [userId]);
     return rows.map((row) => ({ ...row, cachedModels: parseModels(row.cachedModels) }));
-  }
-
-  async function bridgeLegacyCredential(discordUserId, userId) {
-    const [settingsRows] = await pool.query('SELECT ai_provider AS aiProvider, ai_model AS aiModel, ai_api_key AS aiApiKey, active_ai_credential_id AS activeAiCredentialId FROM settings WHERE user_id=?', [userId]);
-    const settings = settingsRows[0];
-    let credentials = await getCredentialRows(userId);
-    if (!credentials.length && settings?.aiApiKey) {
-      const baseUrl = settings.aiProvider === 'anthropic' ? 'https://api.anthropic.com/v1' : 'https://api.openai.com/v1';
-      await pool.query('INSERT INTO ai_credentials (user_id, provider, label, base_url, encrypted_api_key, cached_models, validated_at) VALUES (?, ?, NULL, ?, ?, ?, CURRENT_TIMESTAMP)', [userId, settings.aiProvider || 'openai', baseUrl, settings.aiApiKey, JSON.stringify(settings.aiModel ? [{ id: settings.aiModel }] : [])]);
-      credentials = await getCredentialRows(userId);
-      if (credentials[0]) await pool.query('UPDATE settings SET active_ai_credential_id=? WHERE user_id=?', [credentials[0].id, userId]);
-    }
-    return { settings, credentials };
   }
 
   return {
