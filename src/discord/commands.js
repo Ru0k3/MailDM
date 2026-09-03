@@ -6,14 +6,14 @@ export const COMMANDS = [
   { name: 'sample', description: 'See a sample email summary' },
   { name: 'connect', description: 'Connect a Gmail account' },
   { name: 'accounts', description: 'List connected Gmail accounts' },
-  { name: 'disconnect', description: 'Disconnect and purge a Gmail account', options: [{ name: 'email', type: 3, required: false }] },
+  { name: 'disconnect', description: 'Disconnect and purge a Gmail account', options: [{ name: 'email', description: 'Email address of the account to disconnect', type: 3, required: false }] },
   { name: 'settings', description: 'Show your MailDM settings' },
-  { name: 'set-time', description: 'Set daily summary time', options: [{ name: 'time', type: 3, required: true }, { name: 'timezone', type: 3, required: false }] },
-  { name: 'set-ai-provider', description: 'Set the legacy default AI provider', options: [{ name: 'provider', type: 3, required: true, choices: [{ name: 'OpenAI', value: 'openai' }, { name: 'Anthropic', value: 'anthropic' }] }] },
-  { name: 'set-model', description: 'Set a model selection token from /models', options: [{ name: 'selection', type: 3, required: true }] },
-  { name: 'set-ai-key', description: 'Add a provider API key privately', options: [{ name: 'provider', type: 3, required: true, choices: [{ name: 'OpenAI', value: 'openai' }, { name: 'Anthropic', value: 'anthropic' }, { name: 'OpenRouter', value: 'openrouter' }, { name: 'Custom', value: 'custom' }] }, { name: 'key', type: 3, required: true }, { name: 'base_url', type: 3, required: false }, { name: 'label', type: 3, required: false }] },
+  { name: 'set-time', description: 'Set daily summary time', options: [{ name: 'time', description: 'Time in 24-hour HH:MM format, e.g. 09:00', type: 3, required: true }, { name: 'timezone', description: 'IANA timezone, e.g. America/New_York', type: 3, required: false }] },
+  { name: 'set-ai-provider', description: 'Set the legacy default AI provider', options: [{ name: 'provider', description: 'AI provider to use', type: 3, required: true, choices: [{ name: 'OpenAI', value: 'openai' }, { name: 'Anthropic', value: 'anthropic' }] }] },
+  { name: 'set-model', description: 'Set a model selection token from /models', options: [{ name: 'selection', description: 'Model selection token from /models', type: 3, required: true }] },
+  { name: 'set-ai-key', description: 'Add a provider API key privately', options: [{ name: 'provider', description: 'AI provider this key belongs to', type: 3, required: true, choices: [{ name: 'OpenAI', value: 'openai' }, { name: 'Anthropic', value: 'anthropic' }, { name: 'OpenRouter', value: 'openrouter' }, { name: 'Custom', value: 'custom' }] }, { name: 'key', description: 'Your API key', type: 3, required: true }, { name: 'base_url', description: 'Custom API base URL (for Custom provider)', type: 3, required: false }, { name: 'label', description: 'Friendly label for this credential', type: 3, required: false }] },
   { name: 'models', description: 'Browse and select your available AI models' },
-  { name: 'remove-api-key', description: 'Remove a stored AI credential', options: [{ name: 'credential', type: 3, required: true }] },
+  { name: 'remove-api-key', description: 'Remove a stored AI credential', options: [{ name: 'credential', description: 'Credential selection token from /models', type: 3, required: true }] },
   { name: 'summary-now', description: 'Summarize recent Gmail' },
   { name: 'delete-my-data', description: 'Delete all MailDM data for this Discord user' },
   { name: 'reauthorize', description: 'Reconnect Gmail authorization' }
@@ -99,7 +99,7 @@ export async function handleInteraction(interaction, deps) {
     return reply(`Provider: ${active?.provider ?? settings.aiProvider ?? 'none'}\nModel: ${active?.activeModel ?? settings.aiModel ?? 'none'}\nSummary time: ${settings.summaryTime} (${settings.timezone})\nStored AI credentials: ${credentials.length}`);
   }
   if (name === 'set-time') { const time = option(interaction, 'time'); const timezone = option(interaction, 'timezone') ?? (await deps.store.getSettings(discordUserId)).timezone; if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return reply('Use 24-hour HH:MM format, for example `09:00`.'); try { Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(); } catch { return reply('Use a valid IANA timezone, for example `America/New_York`.'); } await deps.store.updateSettings(discordUserId, { summaryTime: time, timezone }); return reply(`Daily summary time set to ${time} (${timezone}).`); }
-  if (name === 'set-ai-provider') { const provider = option(interaction, 'provider'); if (!['openai', 'anthropic'].includes(provider)) return reply('Provider must be `openai` or `anthropic`.'); await deps.store.updateSettings(discordUserId, { aiProvider: provider }); return reply(`Legacy provider preference set to ${provider}. Add/select a credential with `/set-ai-key` and `/models`.`); }
+  if (name === 'set-ai-provider') { const provider = option(interaction, 'provider'); if (!['openai', 'anthropic'].includes(provider)) return reply('Provider must be `openai` or `anthropic`.'); await deps.store.updateSettings(discordUserId, { aiProvider: provider }); return reply(`Legacy provider preference set to ${provider}. Add/select a credential with /set-ai-key and /models.`); }
   if (['set-ai-key', 'models', 'set-model', 'remove-api-key'].includes(name) && !isDm(interaction)) return reply('AI credential and model controls are available only in a direct message.');
   if (name === 'set-ai-key') {
     const provider = option(interaction, 'provider') ?? 'openai'; const key = option(interaction, 'key'); const label = option(interaction, 'label'); const suppliedBaseUrl = option(interaction, 'base_url');
