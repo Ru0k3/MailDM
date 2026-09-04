@@ -71,6 +71,38 @@ test('processed-items diagnostic is secret-protected, GET-only, and read-only', 
   assert.equal(post.status, 404);
 });
 
+test('processed-items reset is secret-protected, POST-only, returns deleted count, and has exact account scope', async () => {
+  const { app, store, db, testEnv } = appWithKeyPair();
+  testEnv.ADMIN_DIAGNOSTIC_SECRET = 'diagnostic-test-secret';
+  store.getOrCreateUser('1395071225859932222');
+  store.saveGmailAccount('1395071225859932222', { googleSub: 'target-sub', email: 'ramakrishnadulam10@gmail.com', accessToken: 'token', refreshToken: null, scopes: [] });
+  const target = store.listGmailAccounts('1395071225859932222')[0];
+  store.recordProcessedItems(target.id, ['target-1', 'target-2']);
+
+  store.getOrCreateUser('different-user');
+  store.saveGmailAccount('different-user', { googleSub: 'other-sub', email: 'ramakrishnadulam10@gmail.com', accessToken: 'token', refreshToken: null, scopes: [] });
+  const otherUserAccount = store.listGmailAccounts('different-user')[0];
+  store.recordProcessedItems(otherUserAccount.id, ['other-1']);
+
+  const unauthorized = await request(app).post('/admin/diagnostics/processed-items/reset-account').query({ secret: 'wrong-secret' });
+  assert.equal(unauthorized.status, 404);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM processed_source_items').get().count, 3);
+
+  const get = await request(app).get('/admin/diagnostics/processed-items/reset-account').query({ secret: testEnv.ADMIN_DIAGNOSTIC_SECRET });
+  assert.equal(get.status, 404);
+
+  const authorized = await request(app).post('/admin/diagnostics/processed-items/reset-account').set('x-admin-diagnostic-secret', testEnv.ADMIN_DIAGNOSTIC_SECRET);
+  assert.equal(authorized.status, 200);
+  assert.deepEqual(authorized.body, { deleted: 2 });
+  assert.deepEqual(store.getProcessedItemsDiagnostic(), []);
+  assert.deepEqual([...store.getProcessedExternalIds(otherUserAccount.id)], ['other-1']);
+
+  const repeat = await request(app).post('/admin/diagnostics/processed-items/reset-account').query({ secret: testEnv.ADMIN_DIAGNOSTIC_SECRET });
+  assert.equal(repeat.status, 200);
+  assert.deepEqual(repeat.body, { deleted: 0 });
+  db.close();
+});
+
 test('repository defines every requested slash command', () => {
   const names = new Set(COMMANDS.map((command) => command.name));
   for (const name of ['sample', 'connect', 'accounts', 'disconnect', 'settings', 'set-time', 'set-ai-provider', 'set-model', 'set-ai-key', 'summary-now', 'delete-my-data', 'reauthorize']) assert.equal(names.has(name), true, name);

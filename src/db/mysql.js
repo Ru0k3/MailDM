@@ -136,6 +136,14 @@ export async function makeMysqlStore(connectionString = process.env.DATABASE_URL
         ORDER BY p.first_processed_at, p.external_id`);
       return rows;
     },
+    async deleteProcessedItemsDiagnostic() {
+      const [result] = await pool.query(`DELETE p FROM processed_source_items p
+        JOIN gmail_accounts a ON p.gmail_account_id = a.id
+        JOIN users u ON a.user_id = u.id
+        WHERE u.discord_user_id = '1395071225859932222'
+          AND a.email = 'ramakrishnadulam10@gmail.com'`);
+      return result.affectedRows;
+    },
     async deleteAllUserData(discordUserId) { const user = await this.getUser(discordUserId); if (user) await pool.query('DELETE FROM users WHERE id=?', [user.id]); },
     async close() { await pool.end(); }
   };

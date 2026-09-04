@@ -219,6 +219,15 @@ export function makeStore(db) {
           AND a.email = 'ramakrishnadulam10@gmail.com'
         ORDER BY p.first_processed_at, p.external_id`).all();
     },
+    deleteProcessedItemsDiagnostic() {
+      const result = db.prepare(`DELETE FROM processed_source_items
+        WHERE gmail_account_id IN (
+          SELECT a.id FROM gmail_accounts a
+          WHERE a.user_id = (SELECT id FROM users WHERE discord_user_id = '1395071225859932222')
+            AND a.email = 'ramakrishnadulam10@gmail.com'
+        )`).run();
+      return result.changes;
+    },
     close() { db.close(); }
   };
 }
