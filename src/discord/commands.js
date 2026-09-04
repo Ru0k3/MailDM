@@ -29,22 +29,9 @@ async function modelListing(discordUserId, deps) {
   const credentials = await deps.store.listAiCredentials(discordUserId);
   const components = [];
   const sections = [];
-  const refreshCutoff = Date.now() - 24 * 60 * 60 * 1000;
+  // /models is intentionally cache-first. Provider refreshes are out of this request path.
   for (const credential of credentials) {
-    let current = credential;
-    const validatedAt = credential.validatedAt ? new Date(credential.validatedAt).getTime() : 0;
-    if (!validatedAt || validatedAt < refreshCutoff) {
-      try {
-        const apiKey = decryptSecret(credential.encryptedApiKey, deps.env.SESSION_SECRET);
-        const refreshed = await fetchProviderModels({ provider: credential.provider, baseUrl: credential.baseUrl, apiKey, fetchImpl: deps.fetchImpl });
-        await deps.store.refreshAiCredentialModels(discordUserId, credential.id, refreshed.models);
-        current = { ...credential, cachedModels: refreshed.models };
-      } catch (error) {
-        // A stale-cache refresh is best effort. Existing cached models remain usable.
-        if (!credential.cachedModels?.length) sections.push(`${credentialDisplayName(credential)}: model refresh failed; no cached models are available.`);
-      }
-    }
-    const models = current.cachedModels ?? [];
+    const models = credential.cachedModels ?? [];
     const label = credential.label ? `${credentialDisplayName(credential)} (${credential.label})` : credentialDisplayName(credential);
     sections.push(`${label}${credential.active ? ' [active]' : ''} — ${models.length} cached model${models.length === 1 ? '' : 's'}`);
     const buttons = [];

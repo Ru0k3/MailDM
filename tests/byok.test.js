@@ -51,19 +51,24 @@ test('multiple provider keys are stored separately with cached models and encryp
   assert.deepEqual(store.credentials[1].cachedModels, [{ id: 'router-a' }, { id: 'router-b' }]);
 });
 
-test('/models refreshes stale caches and falls back to existing data on refresh failure', async () => {
+test('/models returns stale cached models without refreshing the provider', async () => {
   const store = makeFakeStore();
   store.credentials.push({ id: 7, provider: 'openai', label: null, baseUrl: 'https://api.openai.com/v1', encryptedApiKey: encryptSecret('sk-refresh-123456', env.SESSION_SECRET), cachedModels: [{ id: 'old-model' }], validatedAt: new Date(Date.now() - 48 * 60 * 60 * 1000) });
-  const { fetchImpl, calls } = mockFetch({ 'https://api.openai.com/v1/models': [{ id: 'new-model' }] });
-  const refreshed = await handleInteraction(command('u', 'models'), { store, env, fetchImpl });
-  assert.equal(calls.some((call) => call.url.endsWith('/models')), true);
-  assert.match(refreshed.data.content, /1 cached model/);
-  assert.equal(store.credentials[0].cachedModels[0].id, 'new-model');
-
-  store.credentials[0].validatedAt = new Date(Date.now() - 48 * 60 * 60 * 1000);
-  const failed = await handleInteraction(command('u', 'models'), { store, env, fetchImpl: async () => { throw new Error('provider timeout'); } });
-  assert.match(failed.data.content, /1 cached model/);
-  assert.equal(store.credentials[0].cachedModels[0].id, 'new-model');
+  let providerCalls = 0;
+  const listing = await handleInteraction(command('u', 'models'), {
+    store,
+    env,
+    fetchImpl: async () => {
+      providerCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      throw new Error('provider timeout');
+    }
+  });
+  assert.equal(providerCalls, 0);
+  assert.match(listing.data.content, /1 cached model/);
+  const modelButton = listing.data.components.flatMap((row) => row.components).find((button) => button.label === 'old-model');
+  assert.ok(modelButton);
+  assert.equal(store.credentials[0].cachedModels[0].id, 'old-model');
 });
 
 test('model selection switches the active model across providers and removal is scoped', async () => {

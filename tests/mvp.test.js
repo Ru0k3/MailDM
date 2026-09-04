@@ -28,7 +28,7 @@ function appWithKeyPair() {
   const keyPair = nacl.sign.keyPair();
   const db = openDatabase();
   const store = makeStore(db);
-  const testEnv = { ...env, DISCORD_PUBLIC_KEY: Buffer.from(keyPair.publicKey).toString('hex') };
+  const testEnv = { ...env, DISCORD_PUBLIC_KEY: Buffer.from(keyPair.publicKey).toString('hex'), DISCORD_APPLICATION_ID: 'test-application' };
   const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'gpt-test', name: 'gpt-test' }] }) });
   return { app: createApp({ store, env: testEnv, fetchImpl }), store, db, keyPair, testEnv };
 }
@@ -48,14 +48,28 @@ test('Discord interactions reject invalid signatures and accept a valid PING', a
   assert.deepEqual(valid.body, { type: 1 });
 });
 
-test('feedback button callbacks are persisted after signature verification', async () => {
+test('feedback button callbacks are persisted after deferred acknowledgement', async () => {
   const { app, db, keyPair } = appWithKeyPair();
-  const body = { type: 3, member: { user: { id: 'feedback-user' } }, message: { id: 'msg-1' }, data: { custom_id: 'feedback:helpful' } };
+  const body = { type: 3, token: 'feedback-token', member: { user: { id: 'feedback-user' } }, message: { id: 'msg-1' }, data: { custom_id: 'feedback:helpful' } };
   const signed = signedBody(body, keyPair);
   const response = await request(app).post('/interactions').set('content-type', 'application/json').set('x-signature-ed25519', signed.sig).set('x-signature-timestamp', signed.timestamp).send(signed.raw);
   assert.equal(response.status, 200);
-  assert.match(response.body.data.content, /Thanks/);
+  assert.deepEqual(response.body, { type: 5 });
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM feedback WHERE rating=?').get('helpful').c, 1);
+});
+
+test('interaction endpoint sends type 5 before slow command work completes', async () => {
+  const { app, store, keyPair } = appWithKeyPair();
+  const originalListAiCredentials = store.listAiCredentials.bind(store);
+  store.listAiCredentials = async (...args) => { await new Promise((resolve) => setTimeout(resolve, 250)); return originalListAiCredentials(...args); };
+  const body = { type: 2, token: 'slow-command-token', member: { user: { id: 'slow-user' } }, data: { name: 'models', options: [] } };
+  const signed = signedBody(body, keyPair);
+  const startedAt = Date.now();
+  const response = await request(app).post('/interactions').set('content-type', 'application/json').set('x-signature-ed25519', signed.sig).set('x-signature-timestamp', signed.timestamp).send(signed.raw);
+  const elapsed = Date.now() - startedAt;
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { type: 5 });
+  assert.ok(elapsed < 200, `initial acknowledgement took ${elapsed}ms`);
 });
 
 test('OAuth state is signed and tampering is rejected', () => {
@@ -75,8 +89,7 @@ test('set-ai-key stores an encrypted value and does not echo the secret', async 
   const signed = signedBody(body, keyPair);
   const response = await request(app).post('/interactions').set('content-type', 'application/json').set('x-signature-ed25519', signed.sig).set('x-signature-timestamp', signed.timestamp).send(signed.raw);
   assert.equal(response.status, 200);
-  assert.match(response.body.data.content, /saved (encrypted|securely)/);
-  assert.doesNotMatch(response.body.data.content, /sk-test/);
+  assert.deepEqual(response.body, { type: 5 });
   const credentials = store.listAiCredentials('u1');
   assert.equal(credentials.length, 1);
   assert.notEqual(credentials[0].encryptedApiKey, 'sk-test-123456789');

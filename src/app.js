@@ -29,24 +29,46 @@ export function createApp({ store, env = process.env, oauthClient = null, fetchI
     catch (error) { console.error('Scheduler tick failed', error); return res.status(500).json({ error: 'scheduler_failed' }); }
   });
 
+  async function editDeferredResponse(interaction, response) {
+    const applicationId = env.DISCORD_APPLICATION_ID;
+    if (!applicationId || !interaction.token) throw new Error('Discord interaction webhook configuration is missing');
+    const webhookUrl = `https://discord.com/api/v10/webhooks/${applicationId}/${interaction.token}/messages/@original`;
+    const webhookResponse = await fetchImpl(webhookUrl, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(response?.data ?? { content: 'Something went wrong while handling that command.', flags: 64 })
+    });
+    if (!webhookResponse.ok) throw new Error(`Discord interaction webhook edit failed: ${webhookResponse.status}`);
+  }
+
   app.post('/interactions', async (req, res) => {
     const valid = verifyDiscordRequest(req.rawBody, req.header('x-signature-ed25519'), req.header('x-signature-timestamp'), env.DISCORD_PUBLIC_KEY);
     if (!valid) return res.status(401).send('invalid request signature');
     if (req.body?.type === 1) return res.json({ type: 1 });
-    if (req.body?.type === 3) {
-      const customId = String(req.body.data?.custom_id ?? '');
-      const [prefix, rating] = customId.split(':');
-      if (prefix === 'feedback' && (rating === 'helpful' || rating === 'not_helpful')) {
-        await store.recordFeedback(req.body.member?.user?.id ?? req.body.user?.id, req.body.message?.id, rating);
-        return res.json({ type: 4, data: { content: 'Thanks for the feedback.', flags: 64 } });
-      }
-    }
+
+    // Discord requires the initial interaction acknowledgement within roughly three seconds.
+    // Send the defer before any database, provider, or other external work.
+    res.json({ type: 5 });
+
     try {
-      const response = await handleInteraction(req.body, { store, env, fetchImpl, gmailAdapterFactory, summarizerFactory });
-      return res.json(response);
+      let response;
+      if (req.body?.type === 3) {
+        const customId = String(req.body.data?.custom_id ?? '');
+        const [prefix, rating] = customId.split(':');
+        if (prefix === 'feedback' && (rating === 'helpful' || rating === 'not_helpful')) {
+          await store.recordFeedback(req.body.member?.user?.id ?? req.body.user?.id, req.body.message?.id, rating);
+          response = { type: 4, data: { content: 'Thanks for the feedback.', flags: 64 } };
+        }
+      }
+      if (!response) response = await handleInteraction(req.body, { store, env, fetchImpl, gmailAdapterFactory, summarizerFactory });
+      await editDeferredResponse(req.body, response);
     } catch (error) {
       console.error('Interaction failed', error);
-      return res.status(500).json({ type: 4, data: { content: 'Something went wrong while handling that command.', flags: 64 } });
+      try {
+        await editDeferredResponse(req.body, { type: 4, data: { content: 'Something went wrong while handling that command.', flags: 64 } });
+      } catch (editError) {
+        console.error('Interaction error response failed', editError);
+      }
     }
   });
   return app;
