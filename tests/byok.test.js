@@ -97,6 +97,30 @@ test('model selection switches the active model across providers and removal is 
   assert.equal(store.credentials.length, 0);
 });
 
+test('/set-model selects an unrendered cached model by exact ID', async () => {
+  const store = makeFakeStore();
+  const cachedModels = Array.from({ length: 21 }, (_, index) => ({ id: `nvidia/model-${index}` }));
+  store.credentials.push({ id: 1, provider: 'custom', label: 'NVIDIA', baseUrl: 'https://integrate.api.nvidia.com/v1', encryptedApiKey: encryptSecret('nvidia-key-123456', env.SESSION_SECRET), cachedModels, validatedAt: new Date() });
+
+  const response = await handleInteraction(command('u', 'set-model', [option('selection', 'nvidia/model-20')]), { store, env, fetchImpl: mockFetch().fetchImpl });
+
+  assert.match(response.data.content, /Active model set to nvidia\/model-20/);
+  assert.equal(store.settings.activeAiCredentialId, 1);
+  assert.equal(store.settings.aiModel, 'nvidia/model-20');
+});
+
+test('/set-model rejects ambiguous exact model IDs across credentials', async () => {
+  const store = makeFakeStore();
+  const cachedModel = { id: 'shared/model' };
+  store.credentials.push({ id: 1, provider: 'openai', cachedModels: [cachedModel] });
+  store.credentials.push({ id: 2, provider: 'anthropic', cachedModels: [cachedModel] });
+
+  const response = await handleInteraction(command('u', 'set-model', [option('selection', 'shared/model')]), { store, env, fetchImpl: mockFetch().fetchImpl });
+
+  assert.match(response.data.content, /multiple credentials/i);
+  assert.equal(store.settings.activeAiCredentialId, null);
+});
+
 test('custom provider SSRF targets are rejected before any provider request', async () => {
   for (const baseUrl of ['https://localhost/v1', 'https://127.0.0.1/v1', 'https://10.0.0.8/v1', 'https://169.254.169.254/latest', 'https://metadata.google.internal/v1']) {
     const store = makeFakeStore(); let requests = 0;

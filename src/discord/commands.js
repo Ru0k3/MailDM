@@ -100,7 +100,25 @@ export async function handleInteraction(interaction, deps) {
     } catch (error) { return reply(error.code === 'AI_AUTH_FAILURE' ? 'That API key was rejected. Nothing was saved.' : 'The provider could not be validated or its model list could not be fetched. Nothing was saved.'); }
   }
   if (name === 'models') { const listing = await modelListing(discordUserId, deps); return reply(listing.sections.length ? listing.sections.join('\n') : 'No AI credentials stored. Use `/set-ai-key` in this DM.', listing.components.length ? { components: listing.components } : {}); }
-  if (name === 'set-model') { const choice = await deps.store.consumeModelChoice(discordUserId, String(option(interaction, 'selection'))); if (!choice) return reply('That model selection expired. Run `/models` again.'); if (!await deps.store.setActiveAiCredential(discordUserId, choice.credentialId, choice.modelId)) return reply('That credential is no longer available. Run `/models` again.'); return reply(`Active model set to ${choice.modelId}.`); }
+  if (name === 'set-model') {
+    const selection = String(option(interaction, 'selection'));
+    const choice = await deps.store.consumeModelChoice(discordUserId, selection);
+    if (choice) {
+      if (!await deps.store.setActiveAiCredential(discordUserId, choice.credentialId, choice.modelId)) return reply('That credential is no longer available. Run `/models` again.');
+      return reply(`Active model set to ${choice.modelId}.`);
+    }
+    const credentials = await deps.store.listAiCredentials(discordUserId);
+    const matches = credentials.flatMap((credential) => (credential.cachedModels ?? [])
+      .filter((model) => model.id === selection)
+      .map((model) => ({ credential, model })));
+    if (matches.length > 1) return reply('That model ID is available under multiple credentials. Use a more specific selection or choose it from the `/models` buttons.');
+    if (matches.length === 1) {
+      const { credential, model } = matches[0];
+      if (!await deps.store.setActiveAiCredential(discordUserId, credential.id, model.id)) return reply('That credential is no longer available. Run `/models` again.');
+      return reply(`Active model set to ${model.id}.`);
+    }
+    return reply('That model selection expired. Run `/models` again.');
+  }
   if (name === 'remove-api-key') { const selected = String(option(interaction, 'credential')); const choice = await deps.store.consumeCredentialChoice(discordUserId, selected); if (!choice) return reply('That credential selection expired. Run `/models` again.'); const result = await deps.store.removeAiCredential(discordUserId, choice.credentialId); if (!result.removed) return reply('Credential not found. Run `/models` to refresh the list.'); return reply(result.wasActive ? 'Credential removed. Your active model was cleared; run `/models` to choose a new model.' : 'Credential removed. Gmail, settings, schedule, history, and feedback were not changed.'); }
   if (name === 'summary-now') {
     const accounts = await deps.store.listGmailAccounts(discordUserId); if (!accounts.length) return reply('No Gmail account connected. Use `/connect` first.');
