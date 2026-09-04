@@ -1,6 +1,7 @@
 import { decryptSecret } from '../security/index.js';
 import { makeGmailAdapter } from '../gmail/service.js';
 import { makeSummarizer } from './index.js';
+import { buildUnreadWeekQuery } from '../gmail/query.js';
 
 export class PipelineError extends Error {
   constructor(code, message, cause = undefined) { super(message, { cause }); this.name = 'PipelineError'; this.code = code; }
@@ -14,6 +15,7 @@ function isAuthFailure(error) {
 export async function runSummaryForUser({ discordUserId, store, env = process.env, fetchImpl = fetch, gmailAdapterFactory = makeGmailAdapter, summarizerFactory = makeSummarizer, autoRecord = false }) {
   const accounts = await store.listGmailAccounts(discordUserId);
   if (!accounts.length) throw new PipelineError('NO_ACCOUNT', 'No Gmail account is connected.');
+  const settings = await store.getSettings(discordUserId);
   const emails = [];
   const authFailures = [];
   const accountItemsToRecord = [];
@@ -21,7 +23,7 @@ export async function runSummaryForUser({ discordUserId, store, env = process.en
   for (const account of accounts) {
     if (account.reauthRequired) { authFailures.push(account); continue; }
     try {
-      const fetched = await gmailAdapterFactory({ account, env }).listRecentMessages({ maxResults: 10 });
+      const fetched = await gmailAdapterFactory({ account, env }).listRecentMessages({ maxResults: 10, query: buildUnreadWeekQuery({ timeZone: settings.timezone ?? 'UTC' }) });
       const processedSet = store.getProcessedExternalIds ? await store.getProcessedExternalIds(account.id) : new Set();
       const newMessages = fetched.filter((msg) => msg.id && !processedSet.has(msg.id));
       emails.push(...newMessages);
@@ -50,7 +52,6 @@ export async function runSummaryForUser({ discordUserId, store, env = process.en
     return { summary: 'You have no new unread emails since your last summary.', authFailures, newEmailCount: 0, recordProcessedItems };
   }
 
-  const settings = await store.getSettings(discordUserId);
   const activeCredential = store.getActiveAiCredential ? await store.getActiveAiCredential(discordUserId) : null;
   const effectiveSettings = activeCredential
     ? { ...settings, aiProvider: activeCredential.provider, aiModel: activeCredential.activeModel, baseUrl: activeCredential.baseUrl, aiApiKey: decryptSecret(activeCredential.encryptedApiKey, env.SESSION_SECRET) }

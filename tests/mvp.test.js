@@ -24,12 +24,11 @@ function signedBody(body, keyPair) {
   const sig = Buffer.from(nacl.sign.detached(Buffer.from(`${timestamp}${raw}`), keyPair.secretKey)).toString('hex');
   return { raw, timestamp, sig };
 }
-function appWithKeyPair() {
+function appWithKeyPair({ fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'gpt-test', name: 'gpt-test' }] }) }) } = {}) {
   const keyPair = nacl.sign.keyPair();
   const db = openDatabase();
   const store = makeStore(db);
   const testEnv = { ...env, DISCORD_PUBLIC_KEY: Buffer.from(keyPair.publicKey).toString('hex'), DISCORD_APPLICATION_ID: 'test-application' };
-  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'gpt-test', name: 'gpt-test' }] }) });
   return { app: createApp({ store, env: testEnv, fetchImpl }), store, db, keyPair, testEnv };
 }
 
@@ -46,6 +45,32 @@ test('Discord interactions reject invalid signatures and accept a valid PING', a
   const valid = await request(app).post('/interactions').set('content-type', 'application/json').set('x-signature-ed25519', signed.sig).set('x-signature-timestamp', signed.timestamp).send(signed.raw);
   assert.equal(valid.status, 200);
   assert.deepEqual(valid.body, { type: 1 });
+});
+
+test('failed Discord webhook edits log the response body', async () => {
+  let editCalls = 0;
+  const { app, keyPair } = appWithKeyPair({
+    fetchImpl: async () => {
+      editCalls += 1;
+      return editCalls === 1
+        ? { ok: false, status: 400, text: async () => '{"code": 10062, "message": "Unknown interaction"}' }
+        : { ok: true, status: 200, text: async () => '' };
+    }
+  });
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => logged.push(args);
+  try {
+    const body = { type: 2, token: 'failed-edit-token', user: { id: 'failed-edit-user' }, data: { name: 'sample', options: [] } };
+    const signed = signedBody(body, keyPair);
+    const response = await request(app).post('/interactions').set('content-type', 'application/json').set('x-signature-ed25519', signed.sig).set('x-signature-timestamp', signed.timestamp).send(signed.raw);
+    assert.equal(response.status, 200);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  } finally {
+    console.error = originalError;
+  }
+  const failureLog = logged.find(([message]) => message === 'Discord interaction webhook edit failed');
+  assert.deepEqual(failureLog, ['Discord interaction webhook edit failed', { status: 400, responseBody: '{"code": 10062, "message": "Unknown interaction"}' }]);
 });
 
 test('feedback button callbacks are persisted after deferred acknowledgement', async () => {

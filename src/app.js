@@ -38,7 +38,11 @@ export function createApp({ store, env = process.env, oauthClient = null, fetchI
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(response?.data ?? { content: 'Something went wrong while handling that command.', flags: 64 })
     });
-    if (!webhookResponse.ok) throw new Error(`Discord interaction webhook edit failed: ${webhookResponse.status}`);
+    if (!webhookResponse.ok) {
+      const responseBody = await webhookResponse.text();
+      console.error('Discord interaction webhook edit failed', { status: webhookResponse.status, responseBody });
+      throw new Error(`Discord interaction webhook edit failed: ${webhookResponse.status}`);
+    }
   }
 
   app.post('/interactions', async (req, res) => {

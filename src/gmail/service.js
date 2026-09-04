@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import { decryptSecret } from '../security/index.js';
+import { buildUnreadWeekQuery } from './query.js';
 
 function decodeBase64Url(value = '') {
   return Buffer.from(value.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
@@ -29,7 +30,7 @@ export function makeGmailAdapter({ account, env = process.env }) {
   const gmail = google.gmail({ version: 'v1', auth });
 
   return {
-    async listRecentMessages({ maxResults = 10, query = 'newer_than:7d' } = {}) {
+    async listRecentMessages({ maxResults = 10, query = buildUnreadWeekQuery() } = {}) {
       const listed = await gmail.users.messages.list({ userId: 'me', maxResults, q: query });
       const messages = [];
       for (const item of listed.data.messages ?? []) {
