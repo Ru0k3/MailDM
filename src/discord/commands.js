@@ -1,6 +1,7 @@
 import { encryptSecret, decryptSecret } from '../security/index.js';
 import { fetchProviderModels, providerDefinition, resolveProvider, credentialDisplayName } from '../summarizer/providers.js';
 import { runSummaryForUser, PipelineError } from '../summarizer/pipeline.js';
+import { splitDiscordContent } from './delivery.js';
 
 export const COMMANDS = [
   { name: 'sample', description: 'See a sample email summary' },
@@ -124,7 +125,15 @@ export async function handleInteraction(interaction, deps) {
     const accounts = await deps.store.listGmailAccounts(discordUserId); if (!accounts.length) return reply('No Gmail account connected. Use `/connect` first.');
     try {
       const result = await runSummaryForUser({ discordUserId, store: deps.store, env: deps.env, fetchImpl: deps.fetchImpl, gmailAdapterFactory: deps.gmailAdapterFactory, summarizerFactory: deps.summarizerFactory, autoRecord: false });
-      const response = reply(result.summary, { components: feedbackComponents });
+      const chunks = splitDiscordContent(result.summary);
+      const response = reply(chunks[0], chunks.length === 1 ? { components: feedbackComponents } : {});
+      if (chunks.length > 1) {
+        response.followUpContents = chunks.slice(1).map((content, index, remainingChunks) => ({
+          content,
+          flags: 64,
+          ...(index === remainingChunks.length - 1 ? { components: feedbackComponents } : {})
+        }));
+      }
       if (typeof result?.recordProcessedItems === 'function') {
         await result.recordProcessedItems();
       }

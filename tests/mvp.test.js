@@ -7,7 +7,8 @@ import { createApp } from '../src/app.js';
 import { COMMANDS } from '../src/discord/commands.js';
 import { GMAIL_READONLY_SCOPE } from '../src/oauth/google.js';
 import { SYSTEM_PROMPT, buildSummarizerMessages } from '../src/summarizer/index.js';
-import { createSignedState, verifySignedState } from '../src/security/index.js';
+import { createSignedState, verifySignedState, encryptSecret } from '../src/security/index.js';
+import { DISCORD_CONTENT_CHUNK_SIZE, splitDiscordContent } from '../src/discord/delivery.js';
 import { isDueAt, localScheduleParts } from '../src/scheduler/time.js';
 import { SummaryScheduler } from '../src/scheduler/index.js';
 import { PipelineError, runSummaryForUser } from '../src/summarizer/pipeline.js';
@@ -32,9 +33,68 @@ function appWithKeyPair({ fetchImpl = async () => ({ ok: true, status: 200, json
   return { app: createApp({ store, env: testEnv, fetchImpl }), store, db, keyPair, testEnv };
 }
 
+async function postSummaryInteraction(summary) {
+  const keyPair = nacl.sign.keyPair();
+  const db = openDatabase();
+  const store = makeStore(db);
+  const discordUserId = `summary-delivery-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  store.getOrCreateUser(discordUserId);
+  store.saveGmailAccount(discordUserId, { googleSub: `sub-${discordUserId}`, email: `${discordUserId}@example.com`, accessToken: 'access-token', refreshToken: 'refresh-token', scopes: ['https://www.googleapis.com/auth/gmail.readonly'] });
+  store.updateSettings(discordUserId, { aiApiKey: encryptSecret('sk-test-summary-key-123456', env.SESSION_SECRET) });
+  const testEnv = { ...env, DISCORD_PUBLIC_KEY: Buffer.from(keyPair.publicKey).toString('hex'), DISCORD_APPLICATION_ID: 'test-application' };
+  const calls = [];
+  const fetchImpl = async (url, request = {}) => { calls.push({ url, request }); return { ok: true, status: 200, json: async () => ({}) }; };
+  const app = createApp({
+    store,
+    env: testEnv,
+    fetchImpl,
+    gmailAdapterFactory: () => ({ listRecentMessages: async () => [{ id: `message-${discordUserId}` }] }),
+    summarizerFactory: () => ({ summarize: async () => summary })
+  });
+  const body = { type: 2, token: `token-${discordUserId}`, user: { id: discordUserId }, data: { name: 'summary-now' } };
+  const signed = signedBody(body, keyPair);
+  const response = await request(app).post('/interactions').set('content-type', 'application/json').set('x-signature-ed25519', signed.sig).set('x-signature-timestamp', signed.timestamp).send(signed.raw);
+  const expectedCalls = splitDiscordContent(summary).length;
+  for (let attempt = 0; attempt < 100 && calls.length < expectedCalls; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  return { response, calls, summary };
+}
+
 test('repository defines every requested slash command', () => {
   const names = new Set(COMMANDS.map((command) => command.name));
   for (const name of ['sample', 'connect', 'accounts', 'disconnect', 'settings', 'set-time', 'set-ai-provider', 'set-model', 'set-ai-key', 'summary-now', 'delete-my-data', 'reauthorize']) assert.equal(names.has(name), true, name);
+});
+
+test('/summary-now keeps a short summary in one edited response with feedback buttons', async () => {
+  const { response, calls, summary } = await postSummaryInteraction('Short summary');
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { type: 5 });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/messages\/@original$/);
+  const payload = JSON.parse(calls[0].request.body);
+  assert.equal(payload.content, summary);
+  assert.equal(payload.components.length, 1);
+  assert.equal(payload.components[0].components.length, 2);
+});
+
+test('/summary-now sends long summaries as an edited first chunk plus follow-ups with feedback only on the last chunk', async () => {
+  const summary = `${'A'.repeat(DISCORD_CONTENT_CHUNK_SIZE)}${'B'.repeat(37)}${'C'.repeat(DISCORD_CONTENT_CHUNK_SIZE + 11)}`;
+  const { response, calls } = await postSummaryInteraction(summary);
+  assert.equal(response.status, 200);
+  assert.equal(calls.length, 3);
+  const payloads = calls.map((call) => JSON.parse(call.request.body));
+  assert.equal(calls[0].request.method, 'PATCH');
+  assert.match(calls[0].url, /\/messages\/@original$/);
+  assert.equal(payloads[0].content.length, DISCORD_CONTENT_CHUNK_SIZE);
+  assert.equal(payloads[0].components, undefined);
+  for (const call of calls.slice(1)) {
+    assert.equal(call.request.method, 'POST');
+    assert.match(call.url, /\/webhooks\/test-application\/token-/);
+  }
+  assert.equal(payloads[1].content.length, DISCORD_CONTENT_CHUNK_SIZE);
+  assert.equal(payloads[1].components, undefined);
+  assert.equal(payloads[2].components.length, 1);
+  assert.equal(payloads[2].components[0].components.length, 2);
+  assert.equal(payloads.map((payload) => payload.content).join(''), summary);
 });
 
 test('Discord interactions reject invalid signatures and accept a valid PING', async () => {

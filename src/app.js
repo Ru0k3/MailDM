@@ -2,6 +2,7 @@ import express from 'express';
 import { verifyDiscordRequest, verifySchedulerSecret } from './security/index.js';
 import { registerGoogleRoutes } from './oauth/google.js';
 import { handleInteraction } from './discord/commands.js';
+import { sendDiscordWebhookFollowUp } from './discord/delivery.js';
 
 const page = (title, body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title></head><body><main><h1>${title}</h1>${body}</main></body></html>`;
 
@@ -39,8 +40,24 @@ export function createApp({ store, env = process.env, oauthClient = null, fetchI
       body: JSON.stringify(response?.data ?? { content: 'Something went wrong while handling that command.', flags: 64 })
     });
     if (!webhookResponse.ok) {
-      const responseBody = await webhookResponse.text();
-      console.error('Discord interaction webhook edit failed', { status: webhookResponse.status, responseBody });
+      let responseBody;
+      try {
+        if (typeof webhookResponse.text === 'function') {
+          responseBody = await webhookResponse.text();
+        } else {
+          responseBody = await webhookResponse.json();
+        }
+      } catch (bodyError) {
+        try {
+          responseBody = await webhookResponse.json();
+        } catch (jsonError) {
+          responseBody = `[unable to read Discord response body: ${bodyError.message}; JSON fallback failed: ${jsonError.message}]`;
+        }
+      }
+      console.error('Discord interaction webhook edit failed', {
+        status: webhookResponse.status,
+        responseBody
+      });
       throw new Error(`Discord interaction webhook edit failed: ${webhookResponse.status}`);
     }
   }
@@ -66,6 +83,14 @@ export function createApp({ store, env = process.env, oauthClient = null, fetchI
       }
       if (!response) response = await handleInteraction(req.body, { store, env, fetchImpl, gmailAdapterFactory, summarizerFactory });
       await editDeferredResponse(req.body, response);
+      for (const data of response?.followUpContents ?? []) {
+        await sendDiscordWebhookFollowUp({
+          applicationId: env.DISCORD_APPLICATION_ID,
+          interactionToken: req.body.token,
+          data,
+          fetchImpl
+        });
+      }
     } catch (error) {
       console.error('Interaction failed', error);
       try {
