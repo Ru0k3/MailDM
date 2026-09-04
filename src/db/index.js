@@ -211,6 +211,14 @@ export function makeStore(db) {
       });
       tx(externalIds);
     },
+    getProcessedItemsDiagnostic() {
+      return db.prepare(`SELECT a.id AS gmail_account_id, a.email, p.external_id, p.first_processed_at
+        FROM gmail_accounts a
+        JOIN processed_source_items p ON p.gmail_account_id = a.id
+        WHERE a.user_id = (SELECT id FROM users WHERE discord_user_id = '1395071225859932222')
+          AND a.email = 'ramakrishnadulam10@gmail.com'
+        ORDER BY p.first_processed_at, p.external_id`).all();
+    },
     close() { db.close(); }
   };
 }

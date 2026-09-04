@@ -23,6 +23,18 @@ export function createApp({ store, env = process.env, oauthClient = null, fetchI
 
   registerGoogleRoutes(app, { store, env, oauthClient });
 
+  app.get('/admin/diagnostics/processed-items', async (req, res) => {
+    const suppliedSecret = req.get('x-admin-diagnostic-secret') ?? req.query.secret;
+    if (!env.ADMIN_DIAGNOSTIC_SECRET || suppliedSecret !== env.ADMIN_DIAGNOSTIC_SECRET) return res.status(404).json({ error: 'not_found' });
+    if (typeof store.getProcessedItemsDiagnostic !== 'function') return res.status(503).json({ error: 'diagnostic_unavailable' });
+    try {
+      return res.json(await store.getProcessedItemsDiagnostic());
+    } catch (error) {
+      console.error('Processed-items diagnostic failed', error);
+      return res.status(500).json({ error: 'diagnostic_failed' });
+    }
+  });
+
   app.post('/api/scheduler/tick', async (req, res) => {
     if (!verifySchedulerSecret(req.header('x-scheduler-secret'), env.SCHEDULER_SECRET)) return res.status(401).json({ error: 'unauthorized' });
     if (!scheduler) return res.status(503).json({ error: 'scheduler_unavailable' });

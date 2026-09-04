@@ -59,6 +59,18 @@ async function postSummaryInteraction(summary) {
   return { response, calls, summary };
 }
 
+test('processed-items diagnostic is secret-protected, GET-only, and read-only', async () => {
+  const { app, testEnv } = appWithKeyPair();
+  testEnv.ADMIN_DIAGNOSTIC_SECRET = 'diagnostic-test-secret';
+  const unauthorized = await request(app).get('/admin/diagnostics/processed-items').query({ secret: 'wrong-secret' });
+  assert.equal(unauthorized.status, 404);
+  const authorized = await request(app).get('/admin/diagnostics/processed-items').query({ secret: testEnv.ADMIN_DIAGNOSTIC_SECRET });
+  assert.equal(authorized.status, 200);
+  assert.deepEqual(authorized.body, []);
+  const post = await request(app).post('/admin/diagnostics/processed-items').query({ secret: testEnv.ADMIN_DIAGNOSTIC_SECRET });
+  assert.equal(post.status, 404);
+});
+
 test('repository defines every requested slash command', () => {
   const names = new Set(COMMANDS.map((command) => command.name));
   for (const name of ['sample', 'connect', 'accounts', 'disconnect', 'settings', 'set-time', 'set-ai-provider', 'set-model', 'set-ai-key', 'summary-now', 'delete-my-data', 'reauthorize']) assert.equal(names.has(name), true, name);

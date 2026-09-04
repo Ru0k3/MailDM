@@ -127,6 +127,15 @@ export async function makeMysqlStore(connectionString = process.env.DATABASE_URL
       const values = externalIds.map((id) => [gmailAccountId, id]);
       await pool.query('INSERT IGNORE INTO processed_source_items (gmail_account_id, external_id) VALUES ?', [values]);
     },
+    async getProcessedItemsDiagnostic() {
+      const [rows] = await pool.query(`SELECT a.id AS gmail_account_id, a.email, p.external_id, p.first_processed_at
+        FROM gmail_accounts a
+        JOIN processed_source_items p ON p.gmail_account_id = a.id
+        WHERE a.user_id = (SELECT id FROM users WHERE discord_user_id = '1395071225859932222')
+          AND a.email = 'ramakrishnadulam10@gmail.com'
+        ORDER BY p.first_processed_at, p.external_id`);
+      return rows;
+    },
     async deleteAllUserData(discordUserId) { const user = await this.getUser(discordUserId); if (user) await pool.query('DELETE FROM users WHERE id=?', [user.id]); },
     async close() { await pool.end(); }
   };
