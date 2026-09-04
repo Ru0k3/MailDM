@@ -23,9 +23,19 @@ export async function runSummaryForUser({ discordUserId, store, env = process.en
   for (const account of accounts) {
     if (account.reauthRequired) { authFailures.push(account); continue; }
     try {
-      const fetched = await gmailAdapterFactory({ account, env }).listRecentMessages({ maxResults: 10, query: buildUnreadWeekQuery({ timeZone: settings.timezone ?? 'UTC' }) });
+      const query = buildUnreadWeekQuery({ timeZone: settings.timezone ?? 'UTC' });
+      const fetched = await gmailAdapterFactory({ account, env }).listRecentMessages({ maxResults: 10, query });
       const processedSet = store.getProcessedExternalIds ? await store.getProcessedExternalIds(account.id) : new Set();
       const newMessages = fetched.filter((msg) => msg.id && !processedSet.has(msg.id));
+      console.log('Summary account diagnostic', {
+        discordUserId,
+        accountId: account.id,
+        accountEmail: account.email,
+        query,
+        rawMessageCount: fetched.length,
+        processedMessageCount: processedSet.size,
+        newMessageCount: newMessages.length
+      });
       emails.push(...newMessages);
       if (newMessages.length) {
         accountItemsToRecord.push({ accountId: account.id, externalIds: newMessages.map((msg) => msg.id) });
@@ -45,6 +55,13 @@ export async function runSummaryForUser({ discordUserId, store, env = process.en
       }
     }
   };
+
+  console.log('Summary final diagnostic', {
+    discordUserId,
+    accountCount: accounts.length,
+    finalMessageCount: emails.length,
+    finalCountPassedToSummarizer: emails.length
+  });
 
   if (authFailures.length && !emails.length) throw new PipelineError('REAUTH_REQUIRED', 'Gmail authorization needs to be renewed.');
   if (!emails.length) {
