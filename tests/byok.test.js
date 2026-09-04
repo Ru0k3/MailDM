@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handleInteraction } from '../src/discord/commands.js';
 import { makeProviderAdapter } from '../src/summarizer/index.js';
+import { runSummaryForUser } from '../src/summarizer/pipeline.js';
 import { encryptSecret } from '../src/security/index.js';
 
 const env = { SESSION_SECRET: 'byok-test-secret-long-enough', OPENAI_API_KEY: '', ANTHROPIC_API_KEY: '' };
@@ -115,6 +116,44 @@ test('public HTTPS custom provider is accepted and reaches model validation', as
   assert.equal(store.credentials.length, 1);
   assert.equal(store.credentials[0].baseUrl, 'https://llm.example.com/v1');
   assert.deepEqual(store.credentials[0].cachedModels, [{ id: 'vllm-public' }]);
+});
+
+test('NVIDIA custom provider sends the cached model ID unchanged', async () => {
+  let requestBody;
+  const adapter = makeProviderAdapter({ provider: 'custom', baseUrl: 'https://integrate.api.nvidia.com/v1', apiKey: 'nvidia-key', model: 'google/gemma-2b' }, async (_url, request) => {
+    requestBody = JSON.parse(request.body);
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'summary' } }] }) };
+  });
+  await adapter.summarize([{ from: 'sender', subject: 'subject', body: 'body' }]);
+  assert.equal(requestBody.model, 'google/gemma-2b');
+});
+
+test('summary pipeline logs provider status and response body before wrapping AI_FAILURE', async () => {
+  const originalError = console.error;
+  const logs = [];
+  console.error = (...args) => logs.push(args);
+  try {
+    await assert.rejects(
+      runSummaryForUser({
+        discordUserId: 'u',
+        store: {
+          async listGmailAccounts() { return [{ id: 1, email: 'user@example.com', reauthRequired: false }]; },
+          async getProcessedExternalIds() { return new Set(); },
+          async getSettings() { return {}; },
+          async getActiveAiCredential() { return { provider: 'custom', baseUrl: 'https://integrate.api.nvidia.com/v1', encryptedApiKey: encryptSecret('nvidia-key', env.SESSION_SECRET), activeModel: 'google/gemma-2b' }; }
+        },
+        env,
+        gmailAdapterFactory: () => ({ async listRecentMessages() { return [{ id: 'message-1', body: 'body' }]; } }),
+        summarizerFactory: () => ({ async summarize() { const error = new Error('Custom request failed: 400'); error.code = 'AI_FAILURE'; error.status = 400; error.responseBody = '{"detail":"model unavailable"}'; throw error; } })
+      }),
+      (error) => error.code === 'AI_FAILURE'
+    );
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0][0], 'AI provider request failed before PipelineError wrapping');
+  assert.deepEqual(logs[0][1], { code: 'AI_FAILURE', status: 400, responseBody: '{"detail":"model unavailable"}', message: 'Custom request failed: 400', cause: undefined });
 });
 
 test('credential controls are DM-only and all provider adapters retain the guardrail prompt', async () => {
