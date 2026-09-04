@@ -135,7 +135,7 @@ export async function handleInteraction(interaction, deps) {
         }));
       }
       if (typeof result?.recordProcessedItems === 'function') {
-        await result.recordProcessedItems();
+        response.recordProcessedItems = result.recordProcessedItems;
       }
       return response;
     }

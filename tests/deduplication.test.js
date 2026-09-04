@@ -346,6 +346,12 @@ test('/summary-now records processed IDs post-delivery and isolates failures', a
   });
 
   assert.equal(reply2.data.content, 'Manual Summary');
+  assert.equal(typeof reply2.recordProcessedItems, 'function');
+  const processed2BeforeDelivery = store.getProcessedExternalIds(accounts[0].id);
+  assert.equal(processed2BeforeDelivery.size, 0);
+
+  // The application invokes this callback only after the Discord edit/follow-ups succeed.
+  await reply2.recordProcessedItems();
   const processed2 = store.getProcessedExternalIds(accounts[0].id);
   assert.equal(processed2.size, 1);
   assert.ok(processed2.has('msg_cmd_1'));

@@ -91,6 +91,9 @@ export function createApp({ store, env = process.env, oauthClient = null, fetchI
           fetchImpl
         });
       }
+      if (typeof response?.recordProcessedItems === 'function') {
+        await response.recordProcessedItems();
+      }
     } catch (error) {
       console.error('Interaction failed', error);
       try {
