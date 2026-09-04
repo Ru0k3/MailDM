@@ -1,7 +1,19 @@
 export const DISCORD_CONTENT_CHUNK_SIZE = 1900;
 
 export function splitDiscordContent(content) {
-  return String(content).match(new RegExp(`[\\s\\S]{1,${DISCORD_CONTENT_CHUNK_SIZE}}`, 'g')) ?? [''];
+  const text = String(content);
+  if (text.length <= DISCORD_CONTENT_CHUNK_SIZE) return [text];
+  const chunks = [];
+  let remaining = text;
+  while (remaining.length > DISCORD_CONTENT_CHUNK_SIZE) {
+    const boundary = remaining.slice(0, DISCORD_CONTENT_CHUNK_SIZE + 1).lastIndexOf('\n\n');
+    const splitAt = boundary > 0 ? boundary : DISCORD_CONTENT_CHUNK_SIZE;
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt);
+    if (remaining.startsWith('\n\n')) remaining = remaining.slice(2);
+  }
+  if (remaining || !chunks.length) chunks.push(remaining);
+  return chunks;
 }
 
 export async function deliverDiscordDM({ discordUserId, content, env = process.env, fetchImpl = fetch }) {
