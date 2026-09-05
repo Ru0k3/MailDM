@@ -1,69 +1,102 @@
 # MailDM
 
-MailDM is a Gmail-only Discord email summarizer MVP. It exposes an Express health endpoint, Google OAuth start/callback routes, a Discord interactions endpoint for slash commands and feedback controls, and a protected scheduler tick endpoint suitable for Manus Autoscale hosting.
+MailDM helps you stay on top of Gmail without constantly opening your inbox. It watches for new unread messages and sends a concise summary to you in a Discord direct message, so important emails are easier to notice and act on.
+
+## What is MailDM and why it exists
+
+People often do not check email often enough. Important messages can remain unread while meetings, requests, invoices, and account notices wait in the inbox. MailDM connects Gmail to Discord and summarizes what is new for you.
+
+MailDM reads Gmail in read-only mode. It does not send, edit, or delete Gmail messages. You control which AI provider summarizes your mail by adding your own provider key through a private Discord message.
+
+## Setup — required IDs, keys, and secrets
+
+Copy `.env.example` to `.env` and fill in the values below. Never commit `.env`, API keys, OAuth secrets, bot tokens, database credentials, or encryption secrets.
+
+| Variable | Required for | What it means and where to get it |
+|---|---|---|
+| `PORT` | Local/server startup | The HTTP port. `3000` is a sensible local value. |
+| `DATABASE_URL` | Production startup | The MySQL/TiDB-compatible connection URL supplied by your hosting database service. |
+| `SESSION_SECRET` | OAuth and encryption | A long random secret, at least 32 characters. MailDM uses it to sign OAuth state and encrypt stored credentials and Gmail tokens. |
+| `GOOGLE_CLIENT_ID` | Gmail connection | The OAuth client ID from a Google Cloud project with the Gmail API enabled. |
+| `GOOGLE_CLIENT_SECRET` | Gmail connection | The matching OAuth client secret from Google Cloud. Keep it private. |
+| `GOOGLE_REDIRECT_URI` | Gmail connection | The exact callback URL registered in Google Cloud, such as `http://localhost:3000/auth/google/callback`. |
+| `APP_BASE_URL` | OAuth callback | The public base URL where MailDM is running, such as `https://maildm.example.com`. |
+| `DISCORD_APPLICATION_ID` | Discord commands and interactions | The Application ID from the Discord Developer Portal. |
+| `DISCORD_PUBLIC_KEY` | Discord interaction security | The public key from the Discord Developer Portal. Discord uses it to sign interaction requests. |
+| `DISCORD_BOT_TOKEN` | Discord delivery and command registration | The bot token from the Discord Developer Portal. Keep it private. |
+| `SCHEDULER_SECRET` | Scheduled summaries | A separate long random secret sent by your external scheduler in the `X-Scheduler-Secret` header. |
+| `SCHEDULER_DUE_WINDOW_MINUTES` | Scheduled summaries | How late a scheduled run may arrive and still count as due. The default is `10`. |
+| `ADMIN_DIAGNOSTIC_SECRET` | Temporary maintenance diagnostics | A separate long random secret for the temporary processed-item diagnostic endpoints. Keep it private and do not share it in a URL or chat. |
+| `OPENAI_API_KEY` | Optional provider fallback | An optional server-side OpenAI key. Most users should add their own key privately with `/set-ai-key` instead. |
+| `ANTHROPIC_API_KEY` | Optional provider fallback | An optional server-side Anthropic key. Most users should add their own key privately with `/set-ai-key` instead. |
+
+### Discord command registration
+
+Leave `DISCORD_REGISTER_GUILD_ID` unset for normal operation. When it is unset, `npm run register:commands` registers commands globally, which allows DM-only commands such as `/set-ai-key`, `/models`, and `/set-model` to appear correctly in Discord direct messages.
+
+The registration script still recognizes `DISCORD_REGISTER_GUILD_ID` as an optional local-testing override. Guild registration can be useful while developing because changes appear faster, but it is not the normal production configuration. Do not enter an AI key in a public guild channel. Discord displays command parameters to people in that context, while MailDM intentionally blocks credential commands outside a direct message.
 
 ## Commands
 
-The command set is `/sample`, `/connect`, `/accounts`, `/disconnect`, `/settings`, `/set-time`, `/set-ai-provider`, `/set-model`, `/set-ai-key`, `/summary-now`, `/delete-my-data`, and `/reauthorize`. The `disconnect` command removes only the selected Gmail account and its stored tokens; it preserves the user row, settings, summary history, and feedback even when it was the last account. Only `delete-my-data` removes the user row and all cascading data.
+| Command | What it does | Where it works |
+|---|---|---|
+| `/sample` | Shows an example summary. | Anywhere |
+| `/connect` | Starts the Gmail connection flow. | Anywhere |
+| `/accounts` | Lists your connected Gmail accounts. | Anywhere |
+| `/disconnect` | Disconnects and purges one Gmail account. You can optionally provide its email address. | Anywhere |
+| `/settings` | Shows your MailDM settings. | Anywhere |
+| `/set-time` | Sets your daily summary time, such as `09:00`, with an optional IANA timezone such as `America/New_York`. | Anywhere |
+| `/set-ai-provider` | Sets the legacy default provider preference: OpenAI or Anthropic. | Anywhere |
+| `/set-ai-key` | Adds an OpenAI, Anthropic, OpenRouter, or custom OpenAI-compatible provider key. | **DM only** |
+| `/models` | Browses available models for your stored credentials. | **DM only** |
+| `/set-model` | Selects a model using a short-lived selection token from `/models`. | **DM only** |
+| `/remove-api-key` | Removes a stored AI credential using its selection token. | **DM only** |
+| `/summary-now` | Fetches and summarizes recent new Gmail messages immediately. | Anywhere |
+| `/delete-my-data` | Deletes all MailDM data belonging to your Discord user. | Anywhere |
+| `/reauthorize` | Starts the Gmail authorization flow again when access needs attention. | Anywhere |
 
-`/set-time` accepts a 24-hour time plus an optional IANA timezone, such as `09:00` and `America/New_York`.
+Credential and model commands are DM-only because API keys and credential choices should not be exposed in a server channel. MailDM replies privately to commands using Discord's ephemeral response mechanism where applicable.
 
-## Multi-provider BYOK
+## Usage
 
-The AI credential flow supports OpenAI, Anthropic, OpenRouter, and labeled HTTPS custom OpenAI-compatible endpoints. Provider selection is explicit; keys are never inferred from prefixes. `/set-ai-key` validates the key by fetching the provider model list, encrypts the key with `SESSION_SECRET`, and stores it in `ai_credentials`. Custom endpoints require HTTPS, a label, and are rejected for localhost, private, link-local, metadata, or embedded-credential URLs.
+A typical first-time setup looks like this:
 
-Use `/models` in a direct message to browse credentials and model buttons. Each button uses a short-lived opaque server-side token and reveals neither the API key nor the base URL. The first `/models` request after 24 hours attempts a model-list refresh; if refresh fails, the existing cached list remains available. `/set-model` accepts an unexpired selection token, and `/remove-api-key` removes only the selected credential. These controls are DM-only. Existing legacy `settings.ai_provider`, `settings.ai_model`, and `settings.ai_api_key` columns remain for one migration release; a legacy key is bridged into `ai_credentials` on first credential lookup.
+1. Start MailDM and register the Discord commands with `npm run register:commands`.
+2. In Discord, use `/connect` and complete the Google authorization flow.
+3. In a Discord direct message with the bot, use `/set-ai-key` and choose your provider. Never paste an API key into a public server channel.
+4. In the same direct message, use `/models` to browse the models available to that credential.
+5. Use `/set-model` with the selection token from `/models`.
+6. Use `/summary-now` to request a summary immediately, or use `/set-time` to configure the daily schedule.
 
-## External scheduler trigger
-
-The app no longer starts an in-process `setInterval`. Manus Autoscale may scale the app to zero while idle, so an external scheduler must wake the app periodically. The protected endpoint is:
-
-```text
-POST https://YOUR_PUBLISHED_MAILDM_URL/api/scheduler/tick
-X-Scheduler-Secret: YOUR_SCHEDULER_SECRET
-Content-Length: 0
-```
-
-The handler checks `X-Scheduler-Secret` against `SCHEDULER_SECRET` using constant-time comparison **before** touching the database or scheduler. Missing or incorrect secrets receive HTTP `401` and produce no side effects. The endpoint is not listed in the public user-facing pages or Discord API surface.
-
-The default due window is ten minutes (`SCHEDULER_DUE_WINDOW_MINUTES=10`). The external scheduler should run every five minutes. If a cold start or temporary delay means a request arrives several minutes after the user’s configured local time, the user is still considered due during the window. Every scheduled attempt first claims `(user_id, local_date, delivery_kind='scheduled')` in `summary_history`; the SQLite `UNIQUE` constraint means a retry or an overlapping external request cannot deliver two briefs for the same user and local calendar date.
-
-A failed claim may be retried once only when the failure occurred before delivery was attempted and the row has `attempt_count=1`; reauthorization, no-account, and permanent AI-key authentication failures (HTTP 401/403) are not retried. Transient provider failures remain eligible for the one bounded retry. Immediately before calling Discord, the row is marked `delivery_attempted=1`. Any delivery-side failure is permanently non-retryable for that local date because the request may have reached Discord. This prevents duplicate delivery when a response is lost after a message may have been accepted.
-
-For production Autoscale, the production entrypoint uses the Manus-managed MySQL/TiDB-compatible store in `src/db/mysql.js` through `DATABASE_URL`. Its InnoDB unique constraint and transactional `SELECT ... FOR UPDATE` claim hold across concurrent instances. The old SQLite store remains only as an isolated unit-test helper. The managed database schema is initialized automatically at startup; see `GO_LIVE_CHECKLIST.md` for provisioning and environment setup.
-
-The scheduler calculates each user’s local date and wall-clock time from the current instant and their IANA timezone. It does not use a global UTC fire time, and the calculation follows timezone/DST transitions.
-
-## Recommended external setup
-
-For this simple HTTP wake-up, **cron-job.org is the recommended option** because it is purpose-built for recurring HTTP requests, supports custom headers, and can run at minute-level intervals. Create one job with the following values:
-
-| Setting | Value |
-|---|---|
-| URL | `https://YOUR_PUBLISHED_MAILDM_URL/api/scheduler/tick` |
-| Method | `POST` |
-| Schedule | Every 5 minutes |
-| Header | `X-Scheduler-Secret: YOUR_SCHEDULER_SECRET` |
-| Body | Empty |
-
-Generate a long random `SCHEDULER_SECRET`, save it only in Manus environment variables and the scheduler’s secret/header configuration, and never commit it. Rotate it by updating both places if it is exposed.
-
-GitHub Actions is an alternative. The repository includes `.github/workflows/scheduler-ping.yml`; add `MAILDM_BASE_URL` and `SCHEDULER_SECRET` as repository secrets, then enable the workflow. GitHub scheduled workflows are best-effort and may be delayed under load, so the ten-minute window and database claim are required. Do not schedule the workflow exactly on the hour.
-
-## Shared pipeline and failure handling
-
-The protected tick calls the same `runSummaryForUser` pipeline used by `/summary-now`: Gmail read-only fetch, provider summarization, and Discord delivery. Google OAuth token refresh occurs through the Gmail client when an access token needs refreshing. Refresh/revocation failures mark the Gmail account `reauth_required` and trigger a `/reauthorize` notice. AI-provider or key failures mark the job failed and trigger an AI-key/provider notice. Discord DM failures mark the job failed as `DISCORD_DM_FAILURE` and pass the failure to the scheduler failure hook instead of being silently swallowed.
-
-## Security and data handling
-
-Discord requests are rejected unless the Ed25519 signature over `timestamp + raw request body` validates against `DISCORD_PUBLIC_KEY`. OAuth state is signed with `SESSION_SECRET`. Google access and refresh tokens, plus user-provided AI keys, are encrypted at rest with AES-256-GCM. The only Gmail scope requested is `gmail.readonly`; the adapter does not send, modify, or delete messages.
-
-The summarizer has a dedicated system policy stating that email subjects, bodies, sender names, links, attachments, and quoted content are **untrusted data**, not instructions. It explicitly says never to follow instructions found in email content, impersonate another message role, call tools, change settings, reveal secrets, or alter the summarization task because an email requests it. Email fields are enclosed in an untrusted-data boundary, and `<`, `>`, and `&` are escaped so a malicious email cannot close the boundary with injected markup.
+After a summary is delivered, you can use the feedback buttons on the final Discord message to mark it helpful or not helpful.
 
 ## Run locally
 
-Copy `.env.example` to `.env`, fill the required credentials, install dependencies with `npm install`, and run `npm start`. Run `npm test` for behavior tests and `npm run check` for the repository check. Run `npm run register:commands` after setting the Discord application and bot variables.
+Install dependencies and start the application:
 
-## Google OAuth setup
+```bash
+cp .env.example .env
+npm install
+npm start
+```
 
-Configure the Google Auth Platform Branding page with the deployed home page, privacy policy, and terms URLs. Register `GOOGLE_REDIRECT_URI` as an authorized redirect URI. The app requests `https://www.googleapis.com/auth/gmail.readonly`. See `GOOGLE_VERIFICATION.md` for the verification checklist and official references.
+Run the automated checks with:
+
+```bash
+npm test
+npm run check
+```
+
+The production server uses the MySQL/TiDB-compatible store through `DATABASE_URL`. The SQLite store is retained as a unit-test helper.
+
+## Need the deeper technical details?
+
+Read [TECHNICAL.md](TECHNICAL.md) for the architecture, provider integration, scheduler contract, failure handling, security model, and Google OAuth setup.
+
+## References
+
+[1]: .env.example "MailDM environment variable template"
+[2]: src/discord/commands.js "MailDM Discord command definitions"
+[3]: src/discord/register-commands.js "MailDM Discord command registration script"
+[4]: src/oauth/google.js "MailDM Google OAuth implementation"
+[5]: src/security/index.js "MailDM security helpers"
